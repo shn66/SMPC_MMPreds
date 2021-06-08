@@ -34,11 +34,19 @@ INTERSECTION = [\
 STATIC_CARS = [[1, 0], # facing south
                [3, 0]] # facing north
 
-DYNAMIC_CARS  = [[[0,0], [3,1]],  # facing east, turn left towards north
-                 [[2,0], [2,1]]]  # oncoming driving west
-DYN_BEHAVIORS = ["normal", "normal"] # one of normal, cautious, aggressive
+SCENARIO_CASE = 0
+DYNAMIC_CARS = []
+if SCENARIO_CASE == 0:
+	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
+	                 [[2,0,'R'], [2,1,'R']]]  # oncoming driving west
+elif SCENARIO_CASE == 1:
+	DYNAMIC_CARS  = [[[0,0,'R'], [1,1,'R']],  # facing east, turn right towards south
+	                 [[2,0,'L'], [1,1,'L']]]  # facing west, turning left towards south
+else:
+	raise NotImplemented("That scenario has not been made yet.")
+
 COLORS        = ['186,0,0', '65,63,197'] # using colors from Audi.TT set.
-assert(len(DYN_BEHAVIORS) == len(DYNAMIC_CARS) == len(COLORS))
+assert(len(DYNAMIC_CARS) == len(COLORS))
 #########################################################
 
 def make_transform_from_pose(pose, spawn_height=1.5):
@@ -46,13 +54,28 @@ def make_transform_from_pose(pose, spawn_height=1.5):
 	rotation = carla.Rotation(yaw=pose[2])
 	return carla.Transform(location, rotation)
 
-def shift_pose(pose, shift_m=20):
+def shift_pose_along_lane(pose, shift_m=20):
 	# This function shifts back the pose of a vehicle
 	# by simply moving it forward relative to the orientation
 	# of the vehicle by shift_m meters.
 
-	delta_x = shift_m * np.cos(np.radians(float(pose[2])))
-	delta_y = shift_m * np.sin(np.radians(float(pose[2])))
+	forward_yaw_angle = np.radians(float(pose[2]))
+
+	delta_x = shift_m * np.cos(forward_yaw_angle)
+	delta_y = shift_m * np.sin(forward_yaw_angle)
+
+	return [pose[0] + delta_x,
+	        pose[1] + delta_y,
+	        pose[2]]
+
+def shift_pose_across_lane(pose, left_shift_m=3.7):
+	# This function shifts the pose "laterally" to another lane.
+	# If left_shift_m is positive, it will move the car to its left.
+
+	left_yaw_angle = np.radians(float(pose[2])) - np.pi/2.
+
+	delta_x = left_shift_m * np.cos(left_yaw_angle)
+	delta_y = left_shift_m * np.sin(left_yaw_angle)
 
 	return [pose[0] + delta_x,
 	        pose[1] + delta_y,
@@ -85,12 +108,18 @@ def setup_dynamic_cars(world):
 
 	random.seed(0) # setting deterministic sampling of vehicle colors.
 
-	for start_goal, behavior_type, color in zip(DYNAMIC_CARS, DYN_BEHAVIORS, COLORS):
+	for start_goal, color in zip(DYNAMIC_CARS, COLORS):
 		dyn_bp.set_attribute('color', color)
 		start, goal = start_goal
 
-		start_pose = shift_pose(INTERSECTION[start[0]][start[1]], -10.)
-		goal_pose  = shift_pose(INTERSECTION[goal[0]][goal[1]], 10.)
+		start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
+		goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 10.)
+
+		if start[2] == 'L':
+			start_pose = shift_pose_across_lane(start_pose)
+
+		if goal[2]  == 'L':
+			goal_pose = shift_pose_across_lane(goal_pose)
 
 		start_transform = make_transform_from_pose(start_pose)
 		goal_transform  = make_transform_from_pose(goal_pose)
@@ -109,7 +138,7 @@ def setup_camera(world):
 	bp_drone  = bp_library.find('sensor.camera.rgb')
 
 	# This is like a top down view of the intersection.  Can tune later.
-	cam_loc = carla.Location(x=30., y=0., z=100.)
+	cam_loc = carla.Location(x=30., y=0., z=50.)
 	cam_ori = carla.Rotation(pitch=-90, yaw=0., roll=0.)
 	cam_transform = carla.Transform(cam_loc, cam_ori)
 
@@ -130,20 +159,28 @@ def main():
 		client.set_timeout(2.0)
 
 		world = client.get_world()
-		world = client.load_world("Town05")
+		if world.get_map().name != "Town05":
+			world = client.load_world("Town05")
 		world.set_weather(getattr(carla.WeatherParameters, "ClearNoon"))
 
 		static_vehicle_list = setup_static_cars(world)
 		dynamic_vehicle_list, dynamic_policy_list = setup_dynamic_cars(world)
 		drone = setup_camera(world)
 
-		completed = False
-		fps = 20
-		use_spectator_view = False # if this is enabled, will move the drone transform to the spectator view
+		completed = False         # Flag to indicate when all cars have reached their destination
+		fps = 20                  # FPS for the simulation under synchronous mode
+		use_spectator_view = True # Flag to indicate whether to overwrite default drone view with spectator view
+		opencv_viz = False        # Flag to indicate whether to create an external window to view the drone view
+		save_avi   = True         # Flag to indicate whether to save an avi of the drone view.
+
 		with CarlaSyncMode(world, drone, fps=fps) as sync_mode:
 			if use_spectator_view:
 				spectator_transform = world.get_spectator().get_transform()
 				drone.set_transform(spectator_transform)
+
+			writer = None
+			if save_avi:
+				writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (960, 500))
 
 			while not completed:
 				snap, img = sync_mode.tick(timeout=2.0)
@@ -152,9 +189,13 @@ def main():
 				img_array = np.frombuffer(img.raw_data, dtype=np.uint8)
 				img_array = np.reshape(img_array, (img.height, img.width, 4))
 				img_array = img_array[:, :, :3]
-
 				img_array = cv2.resize(img_array, (960, 500), interpolation = cv2.INTER_AREA)
-				cv2.imshow('Drone', img_array); cv2.waitKey(1)
+
+				# Handle OpenCV stuff.
+				if opencv_viz:
+					cv2.imshow('Drone', img_array); cv2.waitKey(1)
+				if save_avi:
+					writer.write(img_array)
 
 				# Handle updating the dynamic cars.  Terminate once all cars reach the goal.
 				completed = True
@@ -162,6 +203,9 @@ def main():
 					control = policy.run_step(1./float(fps))
 					completed = completed and policy.done()
 					act.apply_control(control)
+
+			if save_avi:
+				writer.release()
 
 	finally:
 		for actor in static_vehicle_list:
