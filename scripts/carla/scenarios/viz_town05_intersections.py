@@ -55,7 +55,7 @@ try:
 	client = carla.Client(HOST, PORT)
 	client.set_timeout(2.0)
 	world = client.get_world()
-	# world = client.load_world(TOWN_STR)
+	world = client.load_world(TOWN_STR)
 	world.set_weather(getattr(carla.WeatherParameters, "ClearNoon"))
 
 
