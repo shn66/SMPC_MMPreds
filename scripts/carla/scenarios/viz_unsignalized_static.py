@@ -24,32 +24,41 @@ from frenet_pid_agent import FrenetPIDAgent
 ### Scenario Setup (TODO: json).
 # outer edges, i.e. may be in the wrong lane but should
 # be approximately correct minus a required lane change.
+# INTERSECTION = [\
+# [[14.5, 6.0, 0], [43.1, 5.1, 0]],
+# [[24.4, -16.3, 90], [24.6, 14.7, 90]],
+# [[44.4, -5.2, 180], [15.2, -4.7, 180]],
+# [[35.0, 15.0, 270], [35.0, -14.6, 270]]
+# ]
+
 INTERSECTION = [\
-[[14.5, 6.0, 0], [43.1, 5.1, 0]],
-[[24.4, -16.3, 90], [24.6, 14.7, 90]],
-[[44.4, -5.2, 180], [15.2, -4.7, 180]],
-[[35.0, 15.0, 270], [35.0, -14.6, 270]]
+[[87.3, 5.5, 0], [115.0, 1.6, 0]],
+[[96.3, -15.2, 90], [96.1, 14.1, 90]],
+[[115.5, -2.2, 180], [88.1, -5.1, 180]],
+[[106.7, 14.4, 270], [107.0, -13.7, 270]]
 ]
 
-STATIC_CARS = [[1, 0], # facing south
-               [3, 0]] # facing north
+STATIC_CARS = [[0, 0, 'L'],  # facing east
+               [3, 0, 'R'],  # facing north
+               [2, 0, 'L']]  # facing west
 
-SCENARIO_CASE = 2
-DYNAMIC_CARS = []
-if SCENARIO_CASE == 0:
-	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
-	                 [[2,0,'R'], [2,1,'R']]]  # oncoming driving west
-elif SCENARIO_CASE == 1:
-	DYNAMIC_CARS  = [[[0,0,'R'], [1,1,'R']],  # facing east, turn right towards south
-	                 [[2,0,'L'], [1,1,'L']]]  # facing west, turning left towards south
-elif SCENARIO_CASE == 2:
-	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
-	                 [[2,0,'L'], [1,1,'L']]]  # oncoming driving west
-else:
-	raise NotImplemented("That scenario has not been made yet.")
 
-COLORS        = ['186,0,0', '65,63,197'] # using colors from Audi.TT set.
-assert(len(DYNAMIC_CARS) == len(COLORS))
+# SCENARIO_CASE = 2
+# DYNAMIC_CARS = []
+# if SCENARIO_CASE == 0:
+# 	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
+# 	                 [[2,0,'R'], [2,1,'R']]]  # oncoming driving west
+# elif SCENARIO_CASE == 1:
+# 	DYNAMIC_CARS  = [[[0,0,'R'], [1,1,'R']],  # facing east, turn right towards south
+# 	                 [[2,0,'L'], [1,1,'L']]]  # facing west, turning left towards south
+# elif SCENARIO_CASE == 2:
+# 	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
+# 	                 [[2,0,'L'], [1,1,'L']]]  # oncoming driving west
+# else:
+# 	raise NotImplemented("That scenario has not been made yet.")
+
+# COLORS        = ['186,0,0', '65,63,197'] # using colors from Audi.TT set.
+# assert(len(DYNAMIC_CARS) == len(COLORS))
 #########################################################
 
 def make_transform_from_pose(pose, spawn_height=1.5):
@@ -91,10 +100,13 @@ def setup_static_cars(world):
 	npc_bp = bp_library.filter("vehicle.audi.tt")[0]
 	# Recommended values for Audi.TT
 	# ['186,0,0', '65,63,197', '67,67,67', '246,246,246', '230,221,0', '178,114,0']
-	npc_bp.set_attribute('color', '246,246,246')
+	npc_bp.set_attribute('color', '186,0,0')
 
 	for car_location_inds in STATIC_CARS:
 		pose = INTERSECTION[car_location_inds[0]][car_location_inds[1]]
+		if car_location_inds[2] == 'L':
+			pose = shift_pose_across_lane(pose)
+
 		npc_transform = make_transform_from_pose(pose)
 		static_vehicle_list.append( world.spawn_actor(npc_bp, npc_transform) )
 
@@ -147,7 +159,7 @@ def setup_camera(world):
 
 	bp_drone.set_attribute('image_size_x', str(1920))
 	bp_drone.set_attribute('image_size_x', str(1080))
-	bp_drone.set_attribute('fov', str(90))
+	bp_drone.set_attribute('fov', str(60))
 	bp_drone.set_attribute('role_name', 'drone')
 	drone = world.spawn_actor(bp_drone, cam_transform)
 
@@ -155,8 +167,8 @@ def setup_camera(world):
 
 def main():
 	static_vehicle_list = []
-	dynamic_vehicle_list = []
-	dynamic_policy_list = []
+	# dynamic_vehicle_list = []
+	# dynamic_policy_list = []
 	try:
 		client = carla.Client("localhost", 2000)
 		client.set_timeout(2.0)
@@ -167,7 +179,7 @@ def main():
 		world.set_weather(getattr(carla.WeatherParameters, "ClearNoon"))
 
 		static_vehicle_list = setup_static_cars(world)
-		dynamic_vehicle_list, dynamic_policy_list = setup_dynamic_cars(world)
+		# dynamic_vehicle_list, dynamic_policy_list = setup_dynamic_cars(world)
 		drone = setup_camera(world)
 
 		completed = False         # Flag to indicate when all cars have reached their destination
@@ -181,9 +193,12 @@ def main():
 				spectator_transform = world.get_spectator().get_transform()
 				drone.set_transform(spectator_transform)
 
-			writer = None
-			if save_avi:
-				writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (960, 500))
+			# writer = None
+			# if save_avi:
+			# 	writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (960, 500))
+
+			for _ in range(50):
+				snap, img = sync_mode.tick(timeout=2.0)
 
 			while not completed:
 				snap, img = sync_mode.tick(timeout=2.0)
@@ -192,30 +207,31 @@ def main():
 				img_array = np.frombuffer(img.raw_data, dtype=np.uint8)
 				img_array = np.reshape(img_array, (img.height, img.width, 4))
 				img_array = img_array[:, :, :3]
-				img_array = cv2.resize(img_array, (960, 500), interpolation = cv2.INTER_AREA)
+				cv2.imwrite("intersection_ex.png", img_array)
+				# img_array = cv2.resize(img_array, (960, 500), interpolation = cv2.INTER_AREA)
 
-				# Handle OpenCV stuff.
-				if opencv_viz:
-					cv2.imshow('Drone', img_array); cv2.waitKey(1)
-				if save_avi:
-					writer.write(img_array)
+				# # Handle OpenCV stuff.
+				# if opencv_viz:
+				# 	cv2.imshow('Drone', img_array); cv2.waitKey(1)
+				# if save_avi:
+				# 	writer.write(img_array)
 
 				# Handle updating the dynamic cars.  Terminate once all cars reach the goal.
 				completed = True
-				for act, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
-					control = policy.run_step(1./float(fps))
-					completed = completed and policy.done()
-					act.apply_control(control)
+				# for act, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
+				# 	control = policy.run_step(1./float(fps))
+				# 	completed = completed and policy.done()
+				# 	act.apply_control(control)
 
-			if save_avi:
-				writer.release()
+			# if save_avi:
+			# 	writer.release()
 
 	finally:
 		for actor in static_vehicle_list:
 			actor.destroy()
 
-		for actor in dynamic_vehicle_list:
-			actor.destroy()
+		# for actor in dynamic_vehicle_list:
+		# 	actor.destroy()
 
 		drone.destroy()
 
