@@ -57,27 +57,25 @@ class FrenetTrajectoryHandler(object):
 			self.traj_ph, = plt.plot(self.trajectory[0,1], self.trajectory[0,2], 'bo')
 
 			self.ego_text = plt.title('tmp')
-			
+
 			plt.ion()
 
 	def reached_trajectory_end(self, s_query, resolution=2.):
 		return np.abs(self.trajectory[-1, 0] - s_query) < resolution
-
 
 	def __del__(self):
 		if self.viz:
 			plt.close(self.f)
 
 	def _generate_frenet_reference_trajectory(self, way_s, way_xy, way_yaw, s_resolution=0.5, debug=False):
-		""" 
+		"""
 		Returns an interpolated trajectory x(s), y(s), yaw(s), curvature(s) with resolution
 		given by s_resolution.  Here s is the arclength (meters).  Set debug to true if you want to plot curvature.
 		"""
-		s_frenet = np.arange(way_s[0], way_s[-1], s_resolution)
+		s_frenet = np.arange(way_s[0], way_s[-1] + s_resolution/2, s_resolution)
 		x_frenet = np.interp(s_frenet, way_s, way_xy[:,0])
 		y_frenet = np.interp(s_frenet, way_s, way_xy[:,1])
 
-		#yaw_frenet, curv_frenet = FrenetTrajectoryHandler._fit_heading_and_curvature(x_frenet, y_frenet)
 		yaw_frenet = np.interp(s_frenet, way_s, np.unwrap(way_yaw))        # unwrap to avoid jumps when interpolating.
 		curv_frenet_raw = np.diff(yaw_frenet) / np.diff(s_frenet)          # hope this stays low due to use of unwrap above
 		if len(curv_frenet_raw) > 10:
@@ -120,12 +118,12 @@ class FrenetTrajectoryHandler(object):
 		xy_query = np.array([[x_query, y_query]]) # 1 by 2
 
 		closest_index = np.argmin( np.linalg.norm(xy_traj - xy_query, axis=1) )
-		
+
 		# Note: Can do some smarter things here, like linear interpolation.
 		# If s_K+1 - s_k is reasonably small, we can assume s of the waypoint
 		# and s of the query point are the same for simplicity.
 		s_waypoint   = self.trajectory[closest_index, 0]
-		xy_waypoint  = self.trajectory[closest_index, 1:3]	
+		xy_waypoint  = self.trajectory[closest_index, 1:3]
 
 		psi_waypoint = self.trajectory[closest_index, 3]
 
@@ -147,15 +145,15 @@ class FrenetTrajectoryHandler(object):
 			plt.figure(self.f.number)
 			self.ego_ph.set_xdata(xy_query[0,0]);   self.ego_ph.set_ydata(xy_query[0,1])
 			self.traj_ph.set_xdata(xy_waypoint[0]); self.traj_ph.set_ydata(xy_waypoint[1])
-			
-			self.ego_text.set_text('s: %.2f ey: %.2f epsi: %.3f curv: %.3f' % 
+
+			self.ego_text.set_text('s: %.2f ey: %.2f epsi: %.3f curv: %.3f' %
 				                   (s_waypoint, error_frenet[1], psi_error, self.trajectory[closest_index,4]))
 
 			plt.draw(); plt.pause(0.01)
 
 		# Note: handling e_s can be ugly at kinks in the path (not smooth curvature)
 		# so for simplicity, we can just ignore the e_s component and assume it's small.
-		# Also, this approach is not well suited for cases like u-turns where the closest point 
+		# Also, this approach is not well suited for cases like u-turns where the closest point
 		# is not well defined.
 
 		return s_waypoint, error_frenet[1], psi_error # s, e_y, e_psi
@@ -164,7 +162,7 @@ class FrenetTrajectoryHandler(object):
 		s_traj  = self.trajectory[:,0]
 		xy_traj = self.trajectory[:,1:3]
 
-		# Handle "closest waypoint" differently based on s_query: 
+		# Handle "closest waypoint" differently based on s_query:
 		if s_query < s_traj[0]:
 			# NOTE: This can be problematic if s_query is really far away from the start.
 			# Not handling this but intuitively, need to do some extrapolation.
@@ -178,7 +176,7 @@ class FrenetTrajectoryHandler(object):
 			y_waypoint   = self.trajectory[-1, 2]
 			psi_waypoint = self.trajectory[-1, 3]
 		else:
-			# NOTE: we can discuss this more in depth, but it's ambiguous whether to 
+			# NOTE: we can discuss this more in depth, but it's ambiguous whether to
 			# linearly interpolate between waypoints or just using the closest one.
 			# I think this is due to the lack of curvature constraints possibly on waypoints
 			# such that the Frenet <-> Global transformation isn't truly invertible (see e_s discussion above).
@@ -206,26 +204,6 @@ class FrenetTrajectoryHandler(object):
 		closest_index = np.argmin( np.abs( s_traj - s_query) )
 
 		return self.trajectory[closest_index,4]
-
-	@staticmethod
-	def _fit_heading_and_curvature(xs, ys):
-		# TODO: fix this, xs not guaranteed to be ascending.
-		cs = CubicSpline(xs, ys)
-
-		psis = []
-		curvs = []
-
-		for x in xs:
-			dy_dx   = cs(x, 1)
-			d2y_dx2 = cs(x, 2)
-
-			psi = np.arctan(dy_dx)
-			curv = d2y_dx2 / (1 + dy_dx**2)**(3/2)
-			psis.append(psi)
-			curvs.append(curv)
-
-		return np.array(psis), np.array(curvs)
-
 
 if __name__ == '__main__':
 	s = np.arange(0.0, 10.0, 0.1)
