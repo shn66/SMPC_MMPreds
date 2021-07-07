@@ -16,10 +16,16 @@ from examples.synchronous_mode import CarlaSyncMode
 
 scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
-from agents.frenet_pid_agent import FrenetPIDAgent
-from agents.smpc_agent import SMPCAgent
+from policies.frenet_pid_agent import FrenetPIDAgent
+from policies.smpc_agent import SMPCAgent
+
 from rasterizer.agent_history import AgentHistory
 from rasterizer.sem_box_rasterizer import SemBoxRasterizer
+from utils.frenet_trajectory_handler import fix_angle
+
+scriptdir = os.path.abspath(__file__).split('scripts')[0] + 'scripts/'
+sys.path.append(scriptdir)
+from models.deploy_multipath_model import DeployMultiPath
 
 #########################################################
 ### Scenario Setup (TODO: json).
@@ -34,6 +40,9 @@ INTERSECTION = [\
 
 STATIC_CARS = [[1, 0], # facing south
                [3, 0]] # facing north
+
+SAVEDMODELH5 = os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_multipath_10.h5'
+ANCHORS      = os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_clusters_16.npy'
 
 SCENARIO_CASE = 2
 DYNAMIC_CARS = []
@@ -154,6 +163,50 @@ def setup_camera(world):
 
 	return drone
 
+def transform_to_local_frame(motion_hist_array):
+    local_x, local_y, local_yaw = motion_hist_array[-1, 1:]
+
+    R_local_to_world    = np.array([[np.cos(local_yaw), -np.sin(local_yaw)],\
+                                    [np.sin(local_yaw),  np.cos(local_yaw)]])
+    t_local_to_world    = np.array([local_x, local_y])
+
+    R_world_to_local =  R_local_to_world.T
+    t_world_to_local = -R_local_to_world.T @ t_local_to_world
+
+    for t in range(motion_hist_array.shape[0]):
+        xy_global = motion_hist_array[t, 1:3]
+        xy_local  = R_world_to_local @ xy_global + t_world_to_local
+        motion_hist_array[t, 1:3] = xy_local
+
+        pose_diff = motion_hist_array[t, 3] - ego_yaw
+
+        motion_hist_array[t, 3] = fix_angle(pose_diff)
+
+    return motion_hist_array, R_local_to_world, t_local_to_world
+
+def get_target_agent_history(agent_history, target_agent_id):
+	snapshot_dict = agent_history.query(history_secs = [1.0, 0.8, 0.6, 0.4, 0.2, 0.0])
+
+	tms   = []
+	poses = []
+
+	for k in [1.0, 0.8, 0.6, 0.4, 0.2, 0.0]:
+		tms.append(k)
+		snapshot_key = np.round(k, 2)
+		if(len(snapshot[snapshot_key]) == 0):
+			poses.append([None, None, None])
+		else:
+			for entry in snapshot[snapshot_key]['vehicles']:
+				if entry['id'] == target_agent_id:
+					pose = entry['centroid']
+					pose.append(entry['yaw'])
+					poses.append( pose )
+					break
+	tms = [-v if v > 0. else 0. for v in tms]
+	motion_hist_array = np.column_stack((tms, poses)).astype(np.float32)
+
+	return transform_to_local_frame(motion_hist_array)
+
 def main():
 	static_vehicle_list = []
 	dynamic_vehicle_list = []
@@ -177,6 +230,19 @@ def main():
 		opencv_viz = True          # Flag to indicate whether to create an external window to view the drone view
 		save_avi   = False         # Flag to indicate whether to save an avi of the drone view.
 
+		# Predictions Setup
+		agent_history = AgentHistory(world.get_actors())
+		rasterizer    = SemBoxRasterizer(world.get_map().get_topology())
+		pred_model    = DeployMultiPath(SAVEDMODELH5, ANCHORS)
+
+		# Identify the target vehicle: the dynamic vehicle which is NOT ego.
+		target_agent_id = []
+		for vehicle, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
+			if type(policy) is not SMPCAgent:
+				target_agent_id.append(vehicle.id)
+		assert len(target_agent_id) == 1, "Multiple target agents not supported at the moment!"
+		target_agent_id = target_agent_id[0]
+
 		with CarlaSyncMode(world, drone, fps=fps) as sync_mode:
 			if use_spectator_view:
 				spectator_transform = world.get_spectator().get_transform()
@@ -188,6 +254,7 @@ def main():
 
 			while not completed:
 				snap, img = sync_mode.tick(timeout=2.0)
+				agent_history.update(snap, world)
 
 				# Handle drone view.
 				img_array = np.frombuffer(img.raw_data, dtype=np.uint8)
@@ -201,10 +268,23 @@ def main():
 				if save_avi:
 					writer.write(img_array)
 
+				# Make predictions for the target vehicle.
+				img_tv = rasterizer.rasterize(agent_history, target_agent_id)
+				past_states_tv, R_target_to_world, t_target_to_world = \
+				    get_target_agent_history(agent_history, target_agent_id)
+				gmm_pred_tv = pred_model.predict_instance(img_tv, past_states_tv[:-1])
+				gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
+
+				target_vehicle_gmm_preds = [gmm_pred_tv]
+				target_vehicle_positions = [past_states_tv[-1, :2]]
+
 				# Handle updating the dynamic cars.  Terminate once all cars reach the goal.
 				completed = True
 				for act, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
-					control = policy.run_step(1./float(fps))
+					if type(policy) is SMPCAgent:
+						control = policy.run_step(target_vehicle_positions, target_vehicle_gmm_preds)
+					else:
+						control = policy.run_step()
 					completed = completed and policy.done()
 					act.apply_control(control)
 
@@ -224,4 +304,4 @@ def main():
 		print('Done.')
 
 if __name__ == '__main__':
-	main()
+    main()

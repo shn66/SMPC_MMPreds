@@ -93,8 +93,8 @@ class BoxRasterizer:
 		img = np.zeros((self.raster_height, self.raster_width, 3), dtype=np.uint8)
 
 		target_pose_current = agent_history.vehicles[target_agent_id].pose_history[-1]
-        target_centroid_current = np.array(target_pose_current[:2])
-        target_yaw_current      = target_pose_current[2]
+		target_centroid_current = np.array(target_pose_current[:2])
+		target_yaw_current      = target_pose_current[2]
 
 		snapshots = agent_history.query(history_secs=self.history_secs, closeness_eps=self.closeness_eps)
 
