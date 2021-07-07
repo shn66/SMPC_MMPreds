@@ -13,8 +13,7 @@ from navigation.global_route_planner_dao import GlobalRoutePlannerDAO
 
 scriptdir = os.path.abspath(__file__).split('scripts')[0] + 'scripts/'
 sys.path.append(scriptdir)
-from evaluation import gmm_prediction
-from models import deploy_multipath_model
+from evaluation.gmm_prediction import GMMPrediction
 
 scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
@@ -84,7 +83,7 @@ class SMPCAgent(object):
 	def done(self):
 		return self.goal_reached
 
-	def run_step(self, dt):
+	def run_step(self, target_vehicle_positions, target_vehicle_gmm_preds):
 		vehicle_loc   = self.vehicle.get_location()
 		vehicle_wp    = self.map.get_waypoint(vehicle_loc)
 		vehicle_tf    = self.vehicle.get_transform()

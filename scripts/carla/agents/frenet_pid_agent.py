@@ -49,7 +49,7 @@ class FrenetPIDAgent(object):
 	def done(self):
 		return self.goal_reached
 
-	def run_step(self, dt):
+	def run_step(self):
 		vehicle_loc   = self.vehicle.get_location()
 		vehicle_wp    = self.map.get_waypoint(vehicle_loc)
 		vehicle_tf    = self.vehicle.get_transform()
