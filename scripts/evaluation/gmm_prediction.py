@@ -54,6 +54,16 @@ class GMMPrediction:
 
 		return ades
 
+	def transform(self, R, t):
+		# TODO: could vectorize this.
+		for mode_id in range(self.n_modes):
+			for tm_step in range(self.n_timesteps):
+				new_mu = R @ self.mus[mode_id, tm_step] + t
+				self.mus[mode_id, tm_step] = new_mu
+
+				new_sigma = R @ self.sigmas[mode_id, tm_step] @ R.T
+				self.sigmas[mode_id, tm_step] = new_sigma
+
 	##################################################################
 	#################### LIKELIHOOD METRIC ###########################
 	def compute_trajectory_log_likelihood(self, traj_xy):
