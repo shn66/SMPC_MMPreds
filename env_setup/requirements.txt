@@ -10,7 +10,6 @@ Shapely==1.6.4.post2
 psutil
 xmlschema==1.0.18
 ephem
-numpy
 matplotlib
 six
 casadi
