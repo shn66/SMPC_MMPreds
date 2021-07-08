@@ -110,13 +110,13 @@ class BoxRasterizer:
 			target_faded_rgb = colorsys.hsv_to_rgb(self.target_vehicle_hsv[0], self.target_vehicle_hsv[1], val)
 			ped_faded_rgb    = colorsys.hsv_to_rgb(self.pedestrian_hsv[0],  self.pedestrian_hsv[1], val)
 
-			# Plot the NPC vehicles, pedestrians, and target vehicle for this time step.
-			npc_mask    = self._get_mask(scene_dict['vehicles'], target_centroid_current, target_yaw_current)
+			# Plot the surrounding vehicles, pedestrians, and target vehicle for this time step.
+			veh_mask    = self._get_mask(scene_dict['vehicles'], target_centroid_current, target_yaw_current)
 			ped_mask    = self._get_mask(scene_dict['pedestrians'], target_centroid_current, target_yaw_current)
 			target_mask = self._get_target_mask(scene_dict['vehicles'], target_centroid_current, target_yaw_current, target_agent_id)
 
-			img[npc_mask==255] = npc_faded_rgb
-			img[ped_mask==255] = ped_faded_rgb
+			img[veh_mask==255]    = veh_faded_rgb
+			img[ped_mask==255]    = ped_faded_rgb
 			img[target_mask==255] = target_faded_rgb
 
 		return img

@@ -26,9 +26,9 @@ class SemBoxRasterizer:
                                       history_secs=history_secs,
                                       closeness_eps=closeness_eps)
 
-    def rasterize(self, agent_history, target_agent_id):
+    def rasterize(self, agent_history, target_agent_id, render_traffic_lights=True):
 
-        im_sem = self.sem_rast.rasterize(agent_history, target_agent_id)
+        im_sem = self.sem_rast.rasterize(agent_history, target_agent_id, render_traffic_lights=render_traffic_lights)
         im_box = self.box_rast.rasterize(agent_history, target_agent_id)
 
         mask_box = np.any(im_box > 0, -1)     # which pixel locations have nonzero values in im_box

@@ -95,7 +95,8 @@ class AgentHistory:
 		"""
 
 		snapshots = {}
-		tms = np.array(self.ego_vehicle.time_history)
+		arbitrary_veh_key = list(self.vehicles.keys())[0]
+		tms = np.array(self.vehicles[arbitrary_veh_key].time_history)
 		current_tm = tms[-1]
 
 		if np.min(history_secs) < 0.:
