@@ -244,6 +244,9 @@ def main():
         assert len(target_agent_id) == 1, "Multiple target agents not supported at the moment!"
         target_agent_id = target_agent_id[0]
 
+        # Ego policy (?)
+        ego_policy=dynamic_policy_list[0]
+
         with CarlaSyncMode(world, drone, fps=fps) as sync_mode:
             if use_spectator_view:
                 spectator_transform = world.get_spectator().get_transform()
@@ -277,12 +280,16 @@ def main():
                 target_vehicle_gmm_preds = []
                 target_vehicle_positions = []
                 if np.any(np.isnan(past_states_tv)):
-                    pass # Not enough data for predictions to be made.
+                    # pass # Not enough data for predictions to be made.
+                    target_vehicle_positions = [past_states_tv[-1, :2]]
+                    target_vehicle_gmm_preds = [np.stack([[[past_states_tv[-1,:2]]*ego_policy.SMPC.N]*ego_policy.SMPC.N_modes]),
+                                                np.stack([[[np.identity(2)]*ego_policy.SMPC.N]*ego_policy.SMPC.N_modes])]
+                    
                 else:
                     gmm_pred_tv = pred_model.predict_instance(img_tv, past_states_tv[:-1])
                     gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
-
-                    target_vehicle_gmm_preds = [gmm_pred_tv]
+                    gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(2)
+                    target_vehicle_gmm_preds = [gmm_pred_tv.mus[:, :ego_policy.SMPC.N, :], gmm_pred_tv.mus[:, :self.SMPC.N, :, :]]
                     target_vehicle_positions = [past_states_tv[-1, :2]]
 
                 # Handle updating the dynamic cars.  Terminate once all cars reach the goal.
