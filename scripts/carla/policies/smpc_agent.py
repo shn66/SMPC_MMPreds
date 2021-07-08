@@ -44,6 +44,7 @@ class SMPCAgent(object):
 		way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
 		self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
 		self.nominal_speed = nominal_speed_mps
+		self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
 		self.dt = dt
 		self.fit_velocity_profile()
 
@@ -51,7 +52,6 @@ class SMPCAgent(object):
 		self.control_prev = carla.VehicleControl()
 		self.max_steer_angle = np.radians( self.vehicle.get_physics_control().wheels[0].max_steer_angle )
 		self.alpha         = 0.8 # low-pass filter on actuation to simulate first order delay
-		self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
 
 		self.goal_reached = False # flags when the end of the path is reached and agent should stop
 
@@ -63,17 +63,17 @@ class SMPCAgent(object):
 			s, x, y, yaw, curv = state
 			sn, xn, yn, yawn, curvn = next_state
 
-			v_curr = min( self.nominal_speed, np.sqrt(self.lat_accel_max / np.abs(curv)) )
+			v_curr = min( self.nominal_speed, np.sqrt(self.lat_accel_max / max(0.01, np.abs(curv))) )
 
 			t_fits.append( (sn - s) / v_curr + t_fits[-1] )
 
 		# Interpolate the points at time discretization dt.
 		t_disc    = np.arange(t_fits[0], t_fits[-1] + self.dt/2, self.dt)
-		s_disc    = np.interp(ts_disc, t_fits, traj[:,0])
-		x_disc    = np.interp(ts_disc, t_fits, traj[:,1])
-		y_disc    = np.interp(ts_disc, t_fits, traj[:,2])
-		yaw_disc  = np.interp(ts_disc, t_fits, traj[:,3])
-		curv_disc = np.interp(ts_disc, t_fits, traj[:,4])
+		s_disc    = np.interp(t_disc, t_fits, traj[:,0])
+		x_disc    = np.interp(t_disc, t_fits, traj[:,1])
+		y_disc    = np.interp(t_disc, t_fits, traj[:,2])
+		yaw_disc  = np.interp(t_disc, t_fits, traj[:,3])
+		curv_disc = np.interp(t_disc, t_fits, traj[:,4])
 
 		v_disc    = np.diff(s_disc) / np.diff(t_disc)
 		v_disc    = np.insert(v_disc, -1, v_disc[-1]) # repeat the last speed
@@ -108,42 +108,17 @@ class SMPCAgent(object):
 		control.hand_brake = False
 		control.manual_gear_shift = False
 
-		""" TODO: add in MultiPath/SMPC code """
+		""" TODO: add in SMPC code """
 		if self.goal_reached or self.frenet_traj.reached_trajectory_end(s):
 			# Stop if the end of the path is reached and signal completion.
 			self.goal_reached = True
 			control.throttle = 0.
 			control.brake    = -1.
 		else:
-			# Generate reference by identifying a max speed based on curvature + stoplights.
-			if np.abs(curv) > 0.01:
-				max_speed = 3.6 * np.sqrt(self.lat_accel_max / np.abs(curv))
-				max_speed = min(max_speed, speed_limit)
-			else:
-				max_speed = speed_limit
-
-			# Longitudinal control with hysteresis.
-			if speed > max_speed + 2.0:
-				control.throttle = 0.0
-				control.brake = self.k_v * (speed - max_speed)
-			elif speed < max_speed - 2.0:
-				control.throttle = self.k_v * (max_speed - speed)
-				control.brake    = 0.0
-			else:
-				control.throttle = 0.1
-				control.brake    = 0.0
-
-			# Simulated actuation delay, also used to avoid high frequency control inputs.
-			if control.throttle > 0.0:
-				control.throttle = self.alpha * control.throttle + (1. - self.alpha) * self.control_prev.throttle
-
-			elif control.brake > 0.0:
-
-				control.brake    = self.alpha * control.brake    + (1. - self.alpha) * self.control_prev.brake
-
-		# Steering control: just using feedback for now, could add feedforward based on curvature.
-		control.steer    = self.k_ey * (ey + self.x_la * epsi) / self.max_steer_angle
-		control.steer    = self.alpha * control.steer    + (1. - self.alpha) * self.control_prev.steer
+			# Run SMPC Preds.
+			control.throttle = 0.
+			control.brake = 0.
+			control.steer = 0.
 
 		# Clip Carla control to limits.
 		control.throttle = np.clip(control.throttle, 0.0, 1.0)

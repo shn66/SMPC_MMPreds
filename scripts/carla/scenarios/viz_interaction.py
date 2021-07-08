@@ -18,7 +18,7 @@ from examples.synchronous_mode import CarlaSyncMode
 scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
 
-from frenet_pid_agent import FrenetPIDAgent
+from policies.frenet_pid_agent import FrenetPIDAgent
 
 #########################################################
 ### Scenario Setup (TODO: json).
@@ -44,7 +44,7 @@ elif SCENARIO_CASE == 1:
 	                 [[2,0,'L'], [1,1,'L']]]  # facing west, turning left towards south
 elif SCENARIO_CASE == 2:
 	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
-	                 [[2,0,'L'], [1,1,'L']]]  # oncoming driving west
+	                 [[2,0,'L'], [1,1,'L']]]  # oncoming facing west, turn left towards south
 else:
 	raise NotImplemented("That scenario has not been made yet.")
 
@@ -203,7 +203,7 @@ def main():
 				# Handle updating the dynamic cars.  Terminate once all cars reach the goal.
 				completed = True
 				for act, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
-					control = policy.run_step(1./float(fps))
+					control = policy.run_step()
 					completed = completed and policy.done()
 					act.apply_control(control)
 
