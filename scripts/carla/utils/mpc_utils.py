@@ -11,7 +11,7 @@ class RefTrajGenerator():
 		         L_F        = 1.5213, # distance from CoG to front axle (m)
 		         L_R        = 1.4987, # distance from CoG to rear axle (m)
 		         V_MIN      = 0.0,    # min/max velocity constraint (m/s)
-		         V_MAX      = 12.0,     
+		         V_MAX      = 14.0,     
 		         A_MIN      = -3.0,   # min/max acceleration constraint (m/s^2)
 		         A_MAX      =  2.0,     
 		         DF_MIN     = -0.5,   # min/max front steer angle constraint (rad)
@@ -38,7 +38,7 @@ class RefTrajGenerator():
 		''' 
 		(1) Parameters
 		'''
-		self.u_prev  = self.opti.parameter(2) # previous input: [u_{acc, -1}, u_{df, -1}]
+		# self.u_prev  = self.opti.parameter(2) # previous input: [u_{acc, -1}, u_{df, -1}]
 		self.z_curr  = self.opti.parameter(4) # current state:  [x_0, y_0, psi_0, v_0]
 		# Waypoints we would like to follow.
 		# First index corresponds to index of the waypoint,
@@ -95,7 +95,7 @@ class RefTrajGenerator():
 			                  [self.DT *5.0* (x+1) for x in range(self.N)], self.N*[np.pi*0.25],
 			                  self.N*[1.5])
 		
-		self._update_previous_input(0., 0.)
+		# self._update_previous_input(0., 0.)
 		
 		# Ipopt with custom options: https://web.ca.org/docs/ -> see sec 9.1 on Opti stack.
 		p_opts = {'expand': True}
@@ -156,7 +156,7 @@ class RefTrajGenerator():
 			cost += _quad_form(self.z_dv[i+1, :] - self.wp_ref[i,:], self.Q) # tracking cost
 
 		for i in range(self.N ):
-			cost += _quad_form(self.u_dv[i,:], self.R)  # input derivative cost
+			cost += _quad_form(self.u_dv[i,:], self.R)  # input cost
 
 # 		cost += (ca.sum1(self.sl_df_dv) + ca.sum1(self.sl_acc_dv))  # slack cost
 
@@ -226,12 +226,12 @@ class SMPC_MMPreds():
                 L_R          = 1.4987,
                 V_MIN        = 0.0,
                 V_MAX        = 15.0, 
-                N_modes_MAX  =  3,
+                N_modes_MAX  =  2,
                 N_TV_MAX     =  2,
                 N_seq_MAX    =  100,
                 T_BAR_MAX    =  7,
-                D_MIN        =  1,
-                TIGHTENING   =  0,
+                D_MIN        =  2,
+                TIGHTENING   =  1,
                 NOISE_STD    =  [0.5, 0.5, 0.25, 0.01, 0.1], # process noise standard deviations in order [w_x, w_y, w_theta, w_v, w_TV] 
                 Q = [100., 100., 100., 100.], # weights on x, y, and v.
                 R = [1., 100.]       # weights on inputs 
@@ -593,6 +593,7 @@ class SMPC_MMPreds():
         
         sol_dict = {}
         sol_dict['u_control']  = u_control  # control input to apply based on solution
+        sol_dict['v_next']     = v_tp1
         sol_dict['optimal']    = is_opt      # whether the solution is optimal or not
         sol_dict['solve_time'] = solve_time  # how long the solver took in seconds
 
