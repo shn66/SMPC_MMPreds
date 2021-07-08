@@ -15,7 +15,7 @@ class DeployMultiPath:
 
     def __init__(self, saved_model_h5, anchors):
         try:
-            self.model = tf.keras.models.load_model(saved_model_h5)
+            self.model = tf.keras.models.load_model(saved_model_h5, compile=False)
         except Exception as e:
             print(f"Could not load the saved model!  Error: {e}")
 
