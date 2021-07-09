@@ -38,8 +38,8 @@ class FrenetPIDAgent(object):
 		# Control setup and parameters.
 		self.control_prev = carla.VehicleControl()
 		self.max_steer_angle = np.radians( self.vehicle.get_physics_control().wheels[0].max_steer_angle )
-		self.alpha         = 0.8 # low-pass filter on actuation to simulate first order delay
-		self.k_v           = 0.1 # P gain on velocity tracking error (throttle/brake)
+		self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
+		self.k_v           = 0.6 # P gain on velocity tracking error (throttle/brake)
 		self.k_ey          = 0.5 # P gain on lateral error (steering)
 		self.x_la          = 5.0 # lookahead distance for heading error (steering)
 		self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
@@ -55,7 +55,7 @@ class FrenetPIDAgent(object):
 		vehicle_tf    = self.vehicle.get_transform()
 		vehicle_vel   = self.vehicle.get_velocity()
 		vehicle_accel = self.vehicle.get_acceleration()
-		speed_limit   = self.vehicle.get_speed_limit()
+		speed_limit   = 12.0#self.vehicle.get_speed_limit()
 
 		# Get the vehicle's current pose in a RH coordinate system.
 		x, y = vehicle_loc.x, -vehicle_loc.y
@@ -88,14 +88,14 @@ class FrenetPIDAgent(object):
 				max_speed = speed_limit
 
 			# Longitudinal control with hysteresis.
-			if speed > max_speed + 2.0:
+			if speed > max_speed + 0.5:
 				control.throttle = 0.0
 				control.brake = self.k_v * (speed - max_speed)
-			elif speed < max_speed - 2.0:
+			elif speed < max_speed - 0.5:
 				control.throttle = self.k_v * (max_speed - speed)
 				control.brake    = 0.0
 			else:
-				control.throttle = 0.1
+				control.throttle = 0.3
 				control.brake    = 0.0
 
 			# Simulated actuation delay, also used to avoid high frequency control inputs.
