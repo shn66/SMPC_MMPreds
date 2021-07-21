@@ -19,6 +19,7 @@ scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
 
 from policies.frenet_pid_agent import FrenetPIDAgent
+from policies.mpc_agent import MPCAgent
 
 #########################################################
 ### Scenario Setup (TODO: json).
@@ -34,7 +35,7 @@ INTERSECTION = [\
 STATIC_CARS = [[1, 0], # facing south
                [3, 0]] # facing north
 
-SCENARIO_CASE = 2
+SCENARIO_CASE = 0
 DYNAMIC_CARS = []
 if SCENARIO_CASE == 0:
 	DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L']],  # facing east, turn left towards north
@@ -107,16 +108,18 @@ def setup_dynamic_cars(world):
 	bp_library = world.get_blueprint_library()
 	dyn_bp = bp_library.filter("vehicle.mercedes-benz.coupe")[0]
 
-	town_map = world.get_map()
-
 	random.seed(0) # setting deterministic sampling of vehicle colors.
 
-	for start_goal, color in zip(DYNAMIC_CARS, COLORS):
+	for idx_agent, (start_goal, color) in enumerate(zip(DYNAMIC_CARS, COLORS)):
 		dyn_bp.set_attribute('color', color)
 		start, goal = start_goal
 
-		start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
-		goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 10.)
+		if idx_agent == 0:
+			start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -5.)
+			goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
+		else:
+			start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -5.)
+			goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
 
 		if start[2] == 'L':
 			start_pose = shift_pose_across_lane(start_pose)
@@ -129,7 +132,10 @@ def setup_dynamic_cars(world):
 
 		veh_actor   = world.spawn_actor(dyn_bp, start_transform)
 
-		veh_policy  = FrenetPIDAgent(veh_actor, town_map,  goal_transform.location)
+		if(idx_agent == 0):
+			veh_policy  = MPCAgent(veh_actor, goal_transform.location)
+		else:
+			veh_policy  = MPCAgent(veh_actor, goal_transform.location)
 
 		dynamic_vehicle_list.append(veh_actor)
 		dynamic_policy_list.append(veh_policy)
@@ -161,7 +167,8 @@ def main():
 		client = carla.Client("localhost", 2000)
 		client.set_timeout(2.0)
 
-		world = client.get_world()
+		world = client.reload_world() #client.get_world()
+
 		if world.get_map().name != "Town05":
 			world = client.load_world("Town05")
 		world.set_weather(getattr(carla.WeatherParameters, "ClearNoon"))
@@ -170,11 +177,11 @@ def main():
 		dynamic_vehicle_list, dynamic_policy_list = setup_dynamic_cars(world)
 		drone = setup_camera(world)
 
-		completed = False         # Flag to indicate when all cars have reached their destination
-		fps = 20                  # FPS for the simulation under synchronous mode
-		use_spectator_view = True # Flag to indicate whether to overwrite default drone view with spectator view
-		opencv_viz = False        # Flag to indicate whether to create an external window to view the drone view
-		save_avi   = True         # Flag to indicate whether to save an avi of the drone view.
+		completed = False           # Flag to indicate when all cars have reached their destination
+		fps = 20                    # FPS for the simulation under synchronous mode
+		use_spectator_view = False  # Flag to indicate whether to overwrite default drone view with spectator view
+		opencv_viz = True           # Flag to indicate whether to create an external window to view the drone view
+		save_avi   = False          # Flag to indicate whether to save an avi of the drone view.
 
 		with CarlaSyncMode(world, drone, fps=fps) as sync_mode:
 			if use_spectator_view:
