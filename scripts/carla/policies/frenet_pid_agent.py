@@ -20,16 +20,16 @@ class FrenetPIDAgent(object):
 	    Can be extended for more sophisticated agents.
 	"""
 
-	def __init__(self, vehicle, carla_map, goal_location):
+	def __init__(self, vehicle, goal_location):
 		self.vehicle = vehicle
-		self.map     = carla_map
-		self.planner = GlobalRoutePlanner( GlobalRoutePlannerDAO(self.map, sampling_resolution=0.5) )
-		self.planner.setup()
+		carla_map     = self.vehicle.get_world().get_map()
+		planner = GlobalRoutePlanner( GlobalRoutePlannerDAO(carla_map, sampling_resolution=0.5) )
+		planner.setup()
 
 		# Get the high-level route using Carla's API (basically A* search over road segments).
-		init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
-		goal          = self.map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
-		route = self.planner.trace_route(init_waypoint.transform.location, goal.transform.location)
+		init_waypoint = carla_map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
+		goal          = carla_map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
+		route = planner.trace_route(init_waypoint.transform.location, goal.transform.location)
 
 		# Convert the high-level route into a path parametrized by arclength distance s (i.e. Frenet frame).
 		way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
@@ -42,6 +42,7 @@ class FrenetPIDAgent(object):
 		self.k_v           = 0.6 # P gain on velocity tracking error (throttle/brake)
 		self.k_ey          = 0.5 # P gain on lateral error (steering)
 		self.x_la          = 5.0 # lookahead distance for heading error (steering)
+        self.nominal_speed = 12.0 # m/s
 		self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
 
 		self.goal_reached = False # flags when the end of the path is reached and agent should stop
@@ -51,11 +52,10 @@ class FrenetPIDAgent(object):
 
 	def run_step(self):
 		vehicle_loc   = self.vehicle.get_location()
-		vehicle_wp    = self.map.get_waypoint(vehicle_loc)
 		vehicle_tf    = self.vehicle.get_transform()
 		vehicle_vel   = self.vehicle.get_velocity()
 		vehicle_accel = self.vehicle.get_acceleration()
-		speed_limit   = 12.0#self.vehicle.get_speed_limit()
+		speed_limit   = self.nominal_speed #self.vehicle.get_speed_limit()
 
 		# Get the vehicle's current pose in a RH coordinate system.
 		x, y = vehicle_loc.x, -vehicle_loc.y
@@ -87,6 +87,7 @@ class FrenetPIDAgent(object):
 			else:
 				max_speed = speed_limit
 
+			# TODO: use LowLevelControl class instead to unify implementation.
 			# Longitudinal control with hysteresis.
 			if speed > max_speed + 0.5:
 				control.throttle = 0.0
