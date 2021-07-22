@@ -18,6 +18,7 @@ scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
 from policies.frenet_pid_agent import FrenetPIDAgent
 from policies.smpc_agent import SMPCAgent
+from policies.mpc_agent import MPCAgent
 
 from rasterizer.agent_history import AgentHistory
 from rasterizer.sem_box_rasterizer import SemBoxRasterizer
@@ -44,17 +45,17 @@ STATIC_CARS = [[1, 0], # facing south
 SAVEDMODELH5 = os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_multipath_10/'
 ANCHORS      = np.load(os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_clusters_16.npy')
 
-SCENARIO_CASE = 0
+SCENARIO_CASE = 2
 DYNAMIC_CARS = []
 if SCENARIO_CASE == 0:
     DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L'], SMPCAgent],       # facing east, turn left towards north
-                     [[2,0,'L'], [2,1,'L'], FrenetPIDAgent]]  # oncoming driving west
+                     [[2,0,'L'], [2,1,'L'], MPCAgent]]  # oncoming driving west
 elif SCENARIO_CASE == 1:
     DYNAMIC_CARS  = [[[0,0,'R'], [1,1,'R'], SMPCAgent],       # facing east, turn right towards south
-                     [[2,0,'L'], [1,1,'L'], FrenetPIDAgent]]  # facing west, turning left towards south
+                     [[2,0,'L'], [1,1,'L'], MPCAgent]]  # facing west, turning left towards south
 elif SCENARIO_CASE == 2:
     DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L'], SMPCAgent],       # facing east, turn left towards north
-                     [[2,0,'L'], [1,1,'L'], FrenetPIDAgent]]  # facing west, turning left towards south
+                     [[2,0,'L'], [1,1,'L'], MPCAgent]]  # facing west, turning left towards south
 elif SCENARIO_CASE == 3:
     DYNAMIC_CARS  = [[[0,0,'L'], [0,1,'L'], SMPCAgent],       # driving east
                      [[2,0,'L'], [2,1,'L'], FrenetPIDAgent]]  # oncoming driving west
@@ -120,16 +121,18 @@ def setup_dynamic_cars(world):
     bp_library = world.get_blueprint_library()
     dyn_bp = bp_library.filter("vehicle.mercedes-benz.coupe")[0]
 
-    town_map = world.get_map()
 
     random.seed(0) # setting deterministic sampling of vehicle colors.
 
-    for start_goal_policy, color in zip(DYNAMIC_CARS, COLORS):
+    for i,(start_goal_policy, color) in enumerate(zip(DYNAMIC_CARS, COLORS)):
         dyn_bp.set_attribute('color', color)
         start, goal, policy = start_goal_policy
-
-        start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -15.)
-        goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 15.)
+        if i==0:
+            start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
+            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
+        else:
+            start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
+            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
 
         if start[2] == 'L':
             start_pose = shift_pose_across_lane(start_pose)
@@ -142,7 +145,7 @@ def setup_dynamic_cars(world):
 
         veh_actor   = world.spawn_actor(dyn_bp, start_transform)
 
-        veh_policy  = policy(veh_actor, town_map,  goal_transform.location)
+        veh_policy  = policy(veh_actor,  goal_transform.location)
 
         dynamic_vehicle_list.append(veh_actor)
         dynamic_policy_list.append(veh_policy)
@@ -219,7 +222,7 @@ def main():
         client = carla.Client("localhost", 2000)
         client.set_timeout(2.0)
 
-        world = client.get_world()
+        world = client.reload_world() #client.get_world()
         if world.get_map().name != "Town05":
             world = client.load_world("Town05")
         world.set_weather(getattr(carla.WeatherParameters, "ClearNoon"))
@@ -231,8 +234,8 @@ def main():
         completed = False          # Flag to indicate when all cars have reached their destination
         fps = 20                   # FPS for the simulation under synchronous mode (TODO: finalize)
         use_spectator_view = False # Flag to indicate whether to overwrite default drone view with spectator view
-        opencv_viz = False         # Flag to indicate whether to create an external window to view the drone view
-        save_avi   = True         # Flag to indicate whether to save an avi of the drone view.
+        opencv_viz = True         # Flag to indicate whether to create an external window to view the drone view
+        save_avi   = True        # Flag to indicate whether to save an avi of the drone view.
 
         # Predictions Setup
         agent_history = AgentHistory(world.get_actors())
