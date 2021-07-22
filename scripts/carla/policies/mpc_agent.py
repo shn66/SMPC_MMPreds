@@ -19,7 +19,7 @@ from utils import frenet_trajectory_handler as fth
 from utils.low_level_control import LowLevelControl
 import matplotlib.pyplot as plt
 
-class FrenetMPCAgent(object):
+class MPCAgent(object):
     """ A path following agent with collision avoidance constraints over a short horizon. """
 
     def __init__(self, vehicle, goal_location):
@@ -56,7 +56,7 @@ class FrenetMPCAgent(object):
         self.stop_control.steer    = 0.
 
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
-        # self.counter = 0
+        self.counter = 0
 
     def done(self):
         return self.goal_reached
@@ -121,10 +121,14 @@ class FrenetMPCAgent(object):
 
         # if self.counter % 10 == 0:
         #     plt.subplot(311)
-        #     plt.plot(sol_dict['z_ref'][:,0], sol_dict['z_ref'][:,1], 'kx')
-        #     plt.plot(sol_dict['z_mpc'][:,0], sol_dict['z_mpc'][:,1], 'r')
-        #     plt.axis('equal')
-        #     plt.xlabel('x'); plt.ylabel('y')
+        #     plt.plot(-sol_dict['z_ref'][:,1], sol_dict['z_ref'][:,0], 'kx')
+        #     plt.plot(-sol_dict['z_mpc'][:,1], sol_dict['z_mpc'][:,0], 'r')
+
+        #     for tv_ref in sol_dict['tv_refs']:
+        #         plt.plot(-tv_ref[:,1], tv_ref[:,0], 'b')
+        #     plt.ylim([0,50]); plt.xlim([-150, 150])
+
+        #     plt.xlabel('y'); plt.ylabel('x')
 
         #     plt.subplot(312)
         #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 2], 'kx')
@@ -271,8 +275,10 @@ class FrenetMPCAgent(object):
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 1000,      # weights for slack on collision avoidance (norm constraint).
-                   Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
-                   R = [10., 100.]):       # weights on jerk and slew rate (steering angle derivative)
+                   Q = [1., 1., 10., 0.1], # weights on x, y, and v.
+                   R = [10., 100.]):
+                   # Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
+                   # R = [10., 100.]):       # weights on jerk and slew rate (steering angle derivative)
 
         for key in list(locals()):
             if key == 'self':
@@ -333,7 +339,7 @@ class FrenetMPCAgent(object):
         tv_refs_fake = [ 1000. * np.ones((self.N_PRED_TV,2)) for _ in range(self.NUM_TVS) ]
         self._update_obstacles(tv_refs_fake)
 
-        self.opti.solver("ipopt", {"expand": True}, {"max_cpu_time": 0.1, "print_level": 1})
+        self.opti.solver("ipopt", {"expand": True}, {"max_cpu_time": 0.1, "print_level": 0})
 
         sol = self._solve()
 
