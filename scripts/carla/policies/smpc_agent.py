@@ -3,7 +3,7 @@ import os
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
-
+import pdb
 CARLA_ROOT = os.getenv("CARLA_ROOT")
 if CARLA_ROOT is None:
 	raise ValueError("CARLA_ROOT must be defined.")
@@ -20,42 +20,56 @@ scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
 from utils import frenet_trajectory_handler as fth
 from utils import mpc_utils as smpc
+from utils.low_level_control import LowLevelControl
 
 class SMPCAgent(object):
 	""" Implementation of an agent using multimodal predictions and stochastic MPC for control. """
 
 	def __init__(self,
 		         vehicle,                  # Vehicle object that this agent controls
-		         carla_map,                # Map object used to query waypoints from locations
 		         goal_location,            # desired goal location used to generate a path
 		         nominal_speed_mps = 12.0, # sets desired speed (m/s) for tracking path
-		         dt =0.2                   # time discretization (s) used to generate a reference
+		         dt =0.2,
+		         N=8                   # time discretization (s) used to generate a reference
 		         ):
 		self.vehicle = vehicle
-		self.map     = carla_map
+		self.map    = vehicle.get_world().get_map()
+		self.dt      = dt
+		self.goal_location = goal_location
+		self.nominal_speed_mps  = nominal_speed_mps
+		self.N=N
+
 		self.planner = GlobalRoutePlanner( GlobalRoutePlannerDAO(self.map, sampling_resolution=0.5) )
 		self.planner.setup()
 
+		self._low_level_control = LowLevelControl(vehicle)
+
+		self.time=0
+		self.t_ref=0
 		# Get the high-level route using Carla's API (basically A* search over road segments).
-		init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
-		goal          = self.map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
-		route = self.planner.trace_route(init_waypoint.transform.location, goal.transform.location)
+		# init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
+		# goal          = self.map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
+		# route = self.planner.trace_route(init_waypoint.transform.location, goal.transform.location)
 
-		# Convert the high-level route into a path parametrized by arclength distance s (i.e. Frenet frame).
-		# Generate a refernece by fitting a velocity profile with specified nominal speed and time discretization.
-		way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
-		self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
-		self.nominal_speed = nominal_speed_mps
-		self.lat_accel_max = 3.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
-		self.dt = dt
-		self.fit_velocity_profile()
+		# # Convert the high-level route into a path parametrized by arclength distance s (i.e. Frenet frame).
+		# # Generate a refernece by fitting a velocity profile with specified nominal speed and time discretization.
+		# way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
+		# self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
+		# self.nominal_speed = nominal_speed_mps
+		# self.lat_accel_max = 3.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
+		# self.dt = dt
+		# self.fit_velocity_profile()
 
-		# Feasible reference generation by nonlinear trajectory optimization
-		self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=dt)
-		self.feas_ref_gen.update(self.ref_dict)
-		self.feas_ref_dict=self.feas_ref_gen.solve()
-		self.feas_ref_states=self.feas_ref_dict['z_opt']
-		self.feas_ref_inputs=self.feas_ref_dict['u_opt']
+		# # Feasible reference generation by nonlinear trajectory optimization
+		# self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=dt)
+		# self.feas_ref_gen.update(self.ref_dict)
+		# self.feas_ref_dict=self.feas_ref_gen.solve()
+		# self.feas_ref_states=self.feas_ref_dict['z_opt']
+		# self.feas_ref_inputs=self.feas_ref_dict['u_opt']
+
+
+
+		self.reference_regeneration()
 
 		# Debugging: see the reference solution.
 		# plt.subplot(411)
@@ -88,7 +102,7 @@ class SMPCAgent(object):
 
 
 		# MPC initialization (might take a while....)
-		self.SMPC=smpc.SMPC_MMPreds(DT=dt)
+		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt)
 
 
 		# Control setup and parameters.
@@ -97,6 +111,9 @@ class SMPCAgent(object):
 		self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
 		self.k_v           = 0.6
 		self.goal_reached = False # flags when the end of the path is reached and agent should stop
+
+
+
 
 	def fit_velocity_profile(self):
 		t_fits = [0.]
@@ -122,10 +139,51 @@ class SMPCAgent(object):
 		v_disc    = np.insert(v_disc, -1, v_disc[-1]) # repeat the last speed
 
 		self.reference = np.column_stack((t_disc, x_disc, y_disc, yaw_disc, v_disc))
-		self.ref_horizon= self.reference.shape[0]-1
-		self.ref_dict={'x_ref':self.reference[1:,1], 'y_ref':self.reference[1:,2], 'psi_ref':self.reference[1:,3], 'v_ref':self.reference[1:,4],
-						'x0'  :self.reference[0,1],  'y0'  :self.reference[0,2],  'psi0'  :self.reference[0,3],  'v0'  :self.reference[0,4]}
 
+
+	def reference_regeneration(self, *state):
+		if self.time==0:
+			init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
+			goal          = self.map.get_waypoint(self.goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
+			route = self.planner.trace_route(init_waypoint.transform.location, goal.transform.location)
+
+			way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
+			self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
+			self.nominal_speed = self.nominal_speed_mps
+			self.lat_accel_max = 4.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
+
+			self.fit_velocity_profile()
+
+			self.ref_horizon= self.reference.shape[0]-1
+			self.ref_dict={'x_ref':self.reference[1:,1], 'y_ref':self.reference[1:,2], 'psi_ref':self.reference[1:,3], 'v_ref':self.reference[1:,4],
+							'x0'  : self.reference[0,1],  'y0'  : self.reference[0,2],  'psi0'  : self.reference[0,3],  'v0'  : self.reference[0,4]}
+			self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
+			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=self.dt)
+			self.feas_ref_gen.update(self.ref_dict)
+			self.feas_ref_dict=self.feas_ref_gen.solve()
+			self.feas_ref_states=self.feas_ref_dict['z_opt']
+			self.feas_ref_states=np.vstack((self.feas_ref_states, np.array([self.feas_ref_states[-1,:]]*(self.N+1))))
+			self.feas_ref_inputs=self.feas_ref_dict['u_opt']
+			self.feas_ref_inputs=np.vstack((self.feas_ref_inputs, np.array([self.feas_ref_inputs[-1,:]]*self.N)))
+			self.feas_ref_states_new=self.feas_ref_states
+			self.feas_ref_inputs_new=self.feas_ref_inputs
+		else:
+
+			x,y,psi,speed=state
+
+			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon-self.t_ref-1, DT=self.dt)
+
+			self.ref_dict={'x_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,0], 'y_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,1], 'psi_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,2], 'v_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,3],
+							'x0'  : x,  'y0'  : y,  'psi0'  : psi,  'v0'  : speed}
+			self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
+			self.feas_ref_gen.update(self.ref_dict)
+			self.feas_ref_dict=self.feas_ref_gen.solve()
+			self.feas_ref_states_new=self.feas_ref_dict['z_opt']
+			self.feas_ref_states_new=np.vstack((self.feas_ref_states_new, np.array([self.feas_ref_states_new[-1,:]]*(self.N+1))))
+			self.feas_ref_inputs_new=self.feas_ref_dict['u_opt']
+			self.feas_ref_inputs_new=np.vstack((self.feas_ref_inputs_new, np.array([self.feas_ref_inputs_new[-1,:]]*self.N)))
+			# plt.plot(-self.feas_ref_states_new[:,1], self.feas_ref_states_new[:,0], 'kx', -self.feas_ref_states[:,1], self.feas_ref_states[:,0], 'ro')
+			# plt.show()
 
 
 	def done(self):
@@ -155,23 +213,39 @@ class SMPCAgent(object):
 		control = carla.VehicleControl()
 		control.hand_brake = False
 		control.manual_gear_shift = False
-		t_ref=np.argmin(np.linalg.norm(self.feas_ref_states[:,:2]-np.hstack((x,y)), axis=1))
 
+
+		self.t_ref=np.argmin(np.linalg.norm(self.feas_ref_states[:,:2]-np.hstack((x,y)), axis=1))
+
+
+		self.time+=1
 		""" TODO: add in SMPC code """
-		if self.goal_reached or self.frenet_traj.reached_trajectory_end(s) or t_ref>self.ref_horizon-self.SMPC.N:
+		if self.goal_reached or self.frenet_traj.reached_trajectory_end(s, resolution=5.):#or self.t_ref>self.ref_horizon-self.SMPC.N-1:
 			# Stop if the end of the path is reached and signal completion.
 			self.goal_reached = True
 			control.throttle = 0.
 			control.brake    = -1.
 			control.steer    = 0.
+			print("here?")
 		else:
 			# Run SMPC Preds.
+			if self.time%15==0 and self.time>0:
+				self.reference_regeneration(x,y,psi,speed)
 
-			update_dict={  'dx0':x-self.feas_ref_states[t_ref,0],     'dy0':y-self.feas_ref_states[t_ref,1],         'dpsi0':psi-self.feas_ref_states[t_ref,2],       'dv0':speed-self.feas_ref_states[t_ref,3],
+			t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
+			# pdb.set_trace()
+			update_dict={  'dx0':x-self.feas_ref_states_new[t_ref_new,0],     'dy0':y-self.feas_ref_states_new[t_ref_new,1],         'dpsi0':psi-self.feas_ref_states_new[t_ref_new,2],       'dv0':speed-self.feas_ref_states_new[t_ref_new,3],
 						  'x_tv0': [target_vehicle_positions[k][0] for k in range(len(target_vehicle_positions))],        'y_tv0': [target_vehicle_positions[k][1] for k in range(len(target_vehicle_positions))],
-					 	 'x_ref': self.feas_ref_states[t_ref:t_ref+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states[t_ref:t_ref+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states[t_ref:t_ref+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states[t_ref:t_ref+self.SMPC.N+1,3].T,
-					 	 'a_ref': self.feas_ref_inputs[t_ref:t_ref+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs[t_ref:t_ref+self.SMPC.N,1].T,
+					 	 'x_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,3].T,
+					 	 'a_ref': self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.SMPC.N,1].T,
 					 	 'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1]}
+			# update_dict={  'dx0':x-self.feas_ref_states[self.t_ref,0],     'dy0':y-self.feas_ref_states[self.t_ref,1],         'dpsi0':psi-self.feas_ref_states[self.t_ref,2],       'dv0':speed-self.feas_ref_states[self.t_ref,3],
+			# 			  'x_tv0': [target_vehicle_positions[k][0] for k in range(len(target_vehicle_positions))],        'y_tv0': [target_vehicle_positions[k][1] for k in range(len(target_vehicle_positions))],
+			# 		 	 'x_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,3].T,
+			# 		 	 'a_ref': self.feas_ref_inputs[self.t_ref:self.t_ref+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs[self.t_ref:self.t_ref+self.SMPC.N,1].T,
+			# 		 	 'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1]}
+			# if self.time>12:
+			# 	pdb.set_trace()
 			N_TV=len(target_vehicle_positions)
 			t_bar=3
 			i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
@@ -181,32 +255,13 @@ class SMPCAgent(object):
 			u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
 			v_next    = sol_dict['v_next']
 			print(f"\toptimal?: {sol_dict['optimal']}")
-			# Longitudinal control with hysteresis.
-			if speed > v_next + .5:
-				control.throttle = 0.0
-				control.brake = self.k_v * (speed - v_next)
-			elif speed < v_next - .5:
-				control.throttle = self.k_v * (v_next - speed)
-				control.brake    = 0.0
-			else:
-				control.throttle = 0.3
-				control.brake    = 0.0
+			print(f"\tv_next: {sol_dict['v_next']}")
+			print(f"\tv_ref_next: {self.feas_ref_states[self.t_ref+1,3]}")
+			print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
+			print(self.time)
 
-			# Simulated actuation delay, also used to avoid high frequency control inputs.
-			if control.throttle > 0.0:
-				control.throttle = self.alpha * control.throttle + (1. - self.alpha) * self.control_prev.throttle
-
-			elif control.brake > 0.0:
-				control.brake    = self.alpha * control.brake    + (1. - self.alpha) * self.control_prev.brake
-
-			# Steering control: just using feedback for now, could add feedforward based on curvature.
-			control.steer    = -u_control[1] / self.max_steer_angle
-			control.steer    = self.alpha * control.steer    + (1. - self.alpha) * self.control_prev.steer
-
-		# Clip Carla control to limits.
-		control.throttle = np.clip(control.throttle, 0.0, 1.0)
-		control.brake    = np.clip(control.brake, 0.0, 1.0)
-		control.steer    = np.clip(control.steer, -1.0, 1.0)
-
-		self.control_prev = control
+			control = self._low_level_control.update(speed,      # v_curr
+                                                     sol_dict['u_control'][0]+update_dict['a_ref'][0], # a_des
+                                                     sol_dict['v_next'], # v_des
+                                                     sol_dict['u_control'][1]+update_dict['df_ref'][0]) # df_des
 		return control

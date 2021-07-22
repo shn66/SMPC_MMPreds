@@ -8,7 +8,7 @@ class RefTrajGenerator():
 	def __init__(self,
 		         N          = 50,     # timesteps in Optimization Horizon
 		         DT         = 0.2,    # discretization time between timesteps (s)
-		         L_F        = 1.5213, # distance from CoG to front axle (m)
+		         L_F        = 1.7213, # distance from CoG to front axle (m)
 		         L_R        = 1.4987, # distance from CoG to rear axle (m)
 		         V_MIN      = 0.0,    # min/max velocity constraint (m/s)
 		         V_MAX      = 14.0,
@@ -20,8 +20,8 @@ class RefTrajGenerator():
 		         A_DOT_MAX  =  1.5,
 		         DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
 		         DF_DOT_MAX =  0.5,
-		         Q = [1., 1., 100., 0.1], # weights on x, y, and v.
-		         R = [0.001*10., 0.001*500.]):        # weights on inputs
+		         Q = [1., 1., 100., 10], # weights on x, y, and v.
+		         R = [0.1*10., 0.01*100.]):        # weights on inputs
 
 		for key in list(locals()):
 			if key == 'self':
@@ -89,11 +89,11 @@ class RefTrajGenerator():
 
 		self._add_cost()
 
-		self._update_initial_condition(0., 0., 0., 0.5)
+		# self._update_initial_condition(0., 0., 0., 0.5)
 
-		self._update_reference([self.DT *5.0* (x+1) for x in range(self.N)],
-			                  [self.DT *5.0* (x+1) for x in range(self.N)], self.N*[np.pi*0.25],
-			                  self.N*[1.5])
+		# self._update_reference([self.DT *5.0* (x+1) for x in range(self.N)],
+		# 	                  [self.DT *5.0* (x+1) for x in range(self.N)], self.N*[np.pi*0.25],
+		# 	                  self.N*[1.5])
 
 		# self._update_previous_input(0., 0.)
 
@@ -102,7 +102,7 @@ class RefTrajGenerator():
 		s_opts = {'max_cpu_time': 0.1, 'print_level': 0}
 		self.opti.solver('ipopt', p_opts, s_opts)
 
-		sol = self.solve()
+		# sol = self.solve()
 
 	def _add_constraints(self):
 		# State Bound Constraints
@@ -146,17 +146,17 @@ class RefTrajGenerator():
 # 		self.opti.subject_to( 0 <= self.sl_df_dv )
 # 		self.opti.subject_to( 0 <= self.sl_acc_dv )
 		# e.g. things like collision avoidance or lateral acceleration bounds could go here.
+	@staticmethod
+	def _quad_form(z, Q):
+			return ca.mtimes(z.T, ca.mtimes(Q, z))
 
 	def _add_cost(self):
-		def _quad_form(z, Q):
-			return ca.mtimes(z, ca.mtimes(Q, z.T))
-
 		cost = 0
 		for i in range(self.N):
-			cost += _quad_form(self.z_dv[i+1, :] - self.wp_ref[i,:], self.Q) # tracking cost
+			cost += RefTrajGenerator._quad_form(self.z_dv[i+1, :].T - self.wp_ref[i,:].T, self.Q) # tracking cost
 
 		for i in range(self.N ):
-			cost += _quad_form(self.u_dv[i,:], self.R)  # input cost
+			cost += RefTrajGenerator._quad_form(self.u_dv[i,:].T, self.R)  # input cost
 
 # 		cost += (ca.sum1(self.sl_df_dv) + ca.sum1(self.sl_acc_dv))  # slack cost
 
@@ -220,21 +220,23 @@ class RefTrajGenerator():
 class SMPC_MMPreds():
 
     def __init__(self,
-                N            =  8,
+                N            = 10,
                 DT           = 0.2,
-                L_F          = 1.5213,
+                L_F          = 1.7213,
                 L_R          = 1.4987,
-                V_MIN        = 0.0,
+                V_MIN        = 0.,
                 V_MAX        = 15.0,
-                N_modes_MAX  =  2,
+                N_modes_MAX  =  3,
                 N_TV_MAX     =  1,
-                N_seq_MAX    =  100,
+                N_seq_MAX    =  50,
                 T_BAR_MAX    =  4,
-                D_MIN        =  3.,
-                TIGHTENING   =  1.2,
-                NOISE_STD    =  [0.2, 0.2, 0.2, 0.01, 0.2], # process noise standard deviations in order [w_x, w_y, w_theta, w_v, w_TV]
-                Q = [5., 5., 10., 1.], # weights on x, y, and v.
-                R = [0.01*1., 0.01*100.]       # weights on inputs
+                D_MIN        =  4.,
+                TIGHTENING   =  1.5,
+                NOISE_STD    =  [0.01, 0.01, 0.01, .9, 0.1], # process noise standard deviations in order [w_x, w_y, w_theta, w_v, w_TV]
+                Q = [0.1*5., 0.1*5., 1*10., 0.1*1.], # weights on x, y, and v.
+                R = [.001*10., .1*100.]       # weights on inputs
+                # Q = [5., 5., 10., 1.], # weights on x, y, and v.
+                # R = [1., 100.]       # weights on inputs
                 ):
         self.N=N
         self.DT=DT
@@ -274,16 +276,21 @@ class SMPC_MMPreds():
         self.z_tv_curr=[]
 
         self.policy=[]
+        self.slacks=[]
 
         p_opts = {'expand': True}
-        s_opts = {'max_cpu_time': 0.15, 'print_level': 0}
+        s_opts = {'max_cpu_time': 0.2}
+        # s_opts = {'print_level': 0}
         p_opts_scs = {'max_time_milliseconds': 500}
-        s_opts_scs = {'verbose': False}
+        s_opts_scs = {'verbose': 0, 'error_on_fail':0}
+        p_opts_grb = {'OutputFlag': 0}
+        # s_opts_grb = {'CPUtime': 1.15}
+
 
         for i in range((self.t_bar_max)*self.N_TV_max):
-            self.opti.append(ca.Opti())
-            self.opti[i].solver("ipopt", p_opts, s_opts)
-
+            self.opti.append(ca.Opti('conic'))
+            self.opti[i].solver("gurobi", {}, p_opts_grb)
+            # self.opti[i].solver("ipopt", p_opts, s_opts)
             self.z_ref.append(self.opti[i].parameter(4, self.N+1))
             self.u_ref.append(self.opti[i].parameter(2, self.N))
 
@@ -296,7 +303,7 @@ class SMPC_MMPreds():
             self.df_ref.append(self.u_ref[i][1, :])
 
             self.dz_curr.append(self.opti[i].parameter(4))
-
+            self.slacks.append(self.opti[i].variable(1))
 
             N_TV=1+int(i/self.t_bar_max)
             t_bar=i-(N_TV-1)*self.t_bar_max
@@ -381,6 +388,7 @@ class SMPC_MMPreds():
 
 
 
+
     def _get_LTV_EV_dynamics(self, i, N_TV):
 
         A=[ca.MX(4, 4) for n in range(self.N)]
@@ -390,13 +398,14 @@ class SMPC_MMPreds():
             beta = ca.atan( self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_ref[i][t]) )
             dbeta = self.L_R/(1+(self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_ref[i][t]))**2)/(self.L_R+self.L_F)/ca.cos(self.df_ref[i][t])**2
 
-            A[t]=ca.MX.eye(4)
+            A[t]=ca.MX(4,4)
 
             A[t][0,2]+=self.DT*(-self.v_ref[i][t]*ca.sin(self.psi_ref[i][t]+beta))
             A[t][0,3]+=self.DT*(ca.cos(self.psi_ref[i][t]+beta))
             A[t][1,2]+=self.DT*(self.v_ref[i][t]*ca.cos(self.psi_ref[i][t]+beta))
             A[t][1,3]+=self.DT*(ca.sin(self.psi_ref[i][t]+beta))
             A[t][2,2]+=self.DT*(self.v_ref[i][t]/self.L_R*ca.sin(beta))
+            A[t]=ca.expm(A[t])
 
             B[t][0,1]=self.DT*(-self.v_ref[i][t]*ca.sin(self.psi_ref[i][t]+beta)*dbeta)
             B[t][1,1]=self.DT*(self.v_ref[i][t]*ca.cos(self.psi_ref[i][t]+beta)*dbeta)
@@ -410,20 +419,24 @@ class SMPC_MMPreds():
 
         return A,B,E
 
+    def _oa_ev_ref(self, x_ev, y_ev, x_tv, y_tv):
+            # x_ref_ev=x_tv+self.d_min*(0.5*(x_ev[0]+x_ev[1])-x_tv)/ca.norm_2(0.5*ca.vertcat(x_ev[0]+x_ev[1],y_ev[0]+y_ev[1])-ca.vertcat(x_tv,y_tv))
+            # y_ref_ev=y_tv+self.d_min*(0.5*(y_ev[0]+y_ev[1])-y_tv)/ca.norm_2(0.5*ca.vertcat(x_ev[0]+x_ev[1],y_ev[0]+y_ev[1])-ca.vertcat(x_tv,y_tv))
+            x_ref_ev=x_tv+self.d_min*((x_ev[1])-x_tv)/ca.norm_2(ca.vertcat(x_ev[1],y_ev[1])-ca.vertcat(x_tv,y_tv))
+            y_ref_ev=y_tv+self.d_min*((y_ev[1])-y_tv)/ca.norm_2(ca.vertcat(x_ev[1],y_ev[1])-ca.vertcat(x_tv,y_tv))
+            return ca.vertcat(x_ref_ev,y_ref_ev)
+
     def _add_constraints_and_cost(self, i, N_TV, t_bar):
 
-        def _oa_ev_ref(x_ev, y_ev, x_tv, y_tv):
-            x_ref_ev=x_tv+self.d_min*(0.5*(x_ev[0]+x_ev[1])-x_tv)/ca.norm_2(0.5*ca.vertcat(x_ev[0]+x_ev[1],y_ev[0]+y_ev[1])-ca.vertcat(x_tv,y_tv))
-            y_ref_ev=y_tv+self.d_min*(0.5*(y_ev[0]+y_ev[1])-y_tv)/ca.norm_2(0.5*ca.vertcat(x_ev[0]+x_ev[1],y_ev[0]+y_ev[1])-ca.vertcat(x_tv,y_tv))
-            return ca.vertcat(x_ref_ev,y_ref_ev)
+
 
         T=self.T_tv[i]
         c=self.c_tv[i]
         [A,B,E]=self._get_LTV_EV_dynamics(i, N_TV)
         [h,M]=self.policy[i]
-
-        cost = 0
-
+        slack=self.slacks[i]
+        cost = 1000*slack@slack
+        self.opti[i].subject_to(slack>=0)
         self.opti[i].subject_to( self.opti[i].bounded(self.V_MIN,
                                                       self.v_ref[i][1]+A[0][3,:]@self.dz_curr[i]+B[0][3,:]@h[:,0],
                                                       self.V_MAX) )
@@ -442,17 +455,17 @@ class SMPC_MMPreds():
 
             for t in range(1,self.N):
 
-                oa_ref=[_oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]) for k in range(N_TV)]
+                oa_ref=[self._oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]) for k in range(N_TV)]
+                # pdb.set_trace()
+                for k in range(N_TV):
 
-                # for k in range(N_TV):
+                    soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
+                                             slack+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))\
+                                                    @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
+                                                      +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*N_TV*t]@C)-self.d_min**2+(ca.norm_2(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])))**2\
+                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])))
 
-#                     soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
-#                                              2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))\
-#                                                     @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-#                                                       +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*N_TV*t]@C)-self.d_min**2+(ca.norm_2(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])))**2\
-#                                                    +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])))
-
-#                     self.opti[i].subject_to(soc_constr>0)
+                    self.opti[i].subject_to(soc_constr>0)
 
                     # self.opti[i].subject_to(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)).T)\
                     #                         @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
@@ -479,12 +492,17 @@ class SMPC_MMPreds():
                 E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
 
                 H=ca.vertcat(H, h[:,t])
+            nom_z_ev=ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV)))@(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])+B_block@H)
+            cost_matrix=ca.kron(ca.MX.eye(self.N),self.Q)
 
-            cost+=(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                   +B_block@H+C_block@C).T@ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV))).T@ca.kron(ca.MX.eye(self.N),self.Q)@\
-                ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV)))\
-                @(A_block@ca.vertcat(self.dz_curr[i],*[ca.vertcat(self.x_tv_ref[i][k][0][t],self.y_tv_ref[i][k][0][t]) for k in range(N_TV)])\
-                   +B_block@H+C_block@C)+H.T@ca.kron(ca.MX.eye(self.N),self.R)@H
+            # pdb.set_trace()
+            cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),self.R))
+            # cost+=(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
+                #    +B_block@H+C_block@C).T@ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV))).T@ca.kron(ca.MX.eye(self.N),self.Q)@\
+                # ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV)))\
+                # @(A_block@ca.vertcat(self.dz_curr[i],*[ca.vertcat(self.x_tv_ref[i][k][0][t],self.y_tv_ref[i][k][0][t]) for k in range(N_TV)])\
+                #    +B_block@H+C_block@C)+H.T@ca.kron(ca.MX.eye(self.N),self.R)@H
+            # cost+=H.T@ca.kron(ca.MX.eye(self.N),self.R)@H
 
 
         elif t_bar<self.N-1:
@@ -513,17 +531,17 @@ class SMPC_MMPreds():
                     C=ca.vertcat(*[c[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
                     for t in range(1,self.N):
 
-                        oa_ref=[_oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)]
+                        oa_ref=[self._oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)]
 
-                        # for k in range(N_TV):
+                        for k in range(N_TV):
 
-#                             soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
-#                                              2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))\
-#                                                     @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-#                                                       +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*N_TV*t]@C)-self.d_min**2+(ca.norm_2(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])))**2\
-#                                                    +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])))
+                            soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
+                                             slack+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)))\
+                                                    @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
+                                                      +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*N_TV*t]@C)-self.d_min**2+(ca.norm_2(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])))**2\
+                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])))
 
-#                             self.opti[i].subject_to(soc_constr>0)
+                            self.opti[i].subject_to(soc_constr>0)
                             # self.opti[i].subject_to(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@ca.horzcat(ca.MX.eye(2),ca.MX(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.MX.eye(2)).T)\
                             #                         @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
                             #                           +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*N_TV*t]@C)\
@@ -557,11 +575,15 @@ class SMPC_MMPreds():
 
                         E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
 
-                    cost+=(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                               +B_block@H+C_block@C).T@ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV))).T@ca.kron(ca.MX.eye(self.N),self.Q)@\
-                            ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV)))\
-                            @(A_block@ca.vertcat(self.dz_curr[i],*[ca.vertcat(self.x_tv_ref[i][k][0][t],self.y_tv_ref[i][k][0][t]) for k in range(N_TV)])\
-                               +B_block@H+C_block@C)+H.T@ca.kron(ca.MX.eye(self.N),self.R)@H
+                    nom_z_ev=ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV)))@(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])+B_block@H)
+                    cost_matrix=ca.kron(ca.MX.eye(self.N),self.Q)
+                    cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),self.R))
+                    # cost+=(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
+                    #            +B_block@H).T@ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV))).T@ca.kron(ca.MX.eye(self.N),self.Q)@\
+                    #         ca.kron(ca.MX.eye(self.N),ca.horzcat(ca.MX.eye(4), ca.MX(4,2*N_TV)))\
+                    #         @(A_block@ca.vertcat(self.dz_curr[i],*[ca.vertcat(self.x_tv_ref[i][k][0][t],self.y_tv_ref[i][k][0][t]) for k in range(N_TV)])\
+                    #            +B_block@H)+H.T@ca.kron(ca.MX.eye(self.N),self.R)@H
+                    # cost+=H.T@ca.kron(ca.MX.eye(self.N),self.R)@H
 
 
         self.opti[i].minimize( cost )
@@ -577,7 +599,7 @@ class SMPC_MMPreds():
 #         is_opt     = True
 #         sol = self.opti[i].solve_limited()
         try:
-            sol = self.opti[i].solve()
+            sol = self.opti[i].solve_limited()
             # Optimal solution.
             u_control  = sol.value(self.policy[i][0][:,0])
 #             z_opt  = sol.value(self.z_dv)
@@ -585,8 +607,10 @@ class SMPC_MMPreds():
             v_tp1      = sol.value(self.v_ref[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0,0])
             is_opt     = True
         except:
+
             # Suboptimal solution (e.g. timed out).
             u_control  = self.opti[i].debug.value(self.policy[i][0][:,0])
+            # pdb.set_trace()
             # u_control  = self.u_ref_val
             v_tp1      = self.opti[i].debug.value(self.v_ref[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0,0])
             # v_tp1      = self.v_next
