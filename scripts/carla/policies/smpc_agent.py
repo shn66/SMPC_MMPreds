@@ -68,7 +68,7 @@ class SMPCAgent(object):
 		# self.feas_ref_inputs=self.feas_ref_dict['u_opt']
 
 
-
+		self.ol_flag=False
 		self.reference_regeneration()
 
 		# Debugging: see the reference solution.
@@ -103,7 +103,7 @@ class SMPCAgent(object):
 
 		# MPC initialization (might take a while....)
 		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt)
-
+		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt)
 
 		# Control setup and parameters.
 		self.control_prev = carla.VehicleControl()
@@ -244,24 +244,34 @@ class SMPCAgent(object):
 			# 		 	 'x_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,3].T,
 			# 		 	 'a_ref': self.feas_ref_inputs[self.t_ref:self.t_ref+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs[self.t_ref:self.t_ref+self.SMPC.N,1].T,
 			# 		 	 'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1]}
-			# if self.time>12:
-			# 	pdb.set_trace()
-			N_TV=len(target_vehicle_positions)
-			t_bar=3
-			i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
-			self.SMPC.update(i, update_dict)
-			sol_dict=self.SMPC.solve(i)
 
-			u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
-			v_next    = sol_dict['v_next']
-			print(f"\toptimal?: {sol_dict['optimal']}")
-			print(f"\tv_next: {sol_dict['v_next']}")
-			print(f"\tv_ref_next: {self.feas_ref_states[self.t_ref+1,3]}")
-			print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
-			print(self.time)
+			if self.ol_flag:
+
+				self.SMPC_OL.update(update_dict)
+				sol_dict=self.SMPC.solve()
+
+				u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
+				v_next    = sol_dict['v_next']
+				print(f"\toptimal?: {sol_dict['optimal']}")
+				
+			else:		
+				N_TV=len(target_vehicle_positions)
+				t_bar=3
+				i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
+				self.SMPC.update(i, update_dict)
+				sol_dict=self.SMPC.solve(i)
+
+				u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
+				v_next    = sol_dict['v_next']
+				print(f"\toptimal?: {sol_dict['optimal']}")
+				# print(f"\tv_next: {sol_dict['v_next']}")
+				# print(f"\tv_ref_next: {self.feas_ref_states[self.t_ref+1,3]}")
+				# print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
+				# print(self.time)
 
 			control = self._low_level_control.update(speed,      # v_curr
                                                      sol_dict['u_control'][0]+update_dict['a_ref'][0], # a_des
                                                      sol_dict['v_next'], # v_des
                                                      sol_dict['u_control'][1]+update_dict['df_ref'][0]) # df_des
-		return control
+			
+			return control

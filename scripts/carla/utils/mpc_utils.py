@@ -661,3 +661,249 @@ class SMPC_MMPreds():
         N_TV=1+int(i/self.t_bar_max)
         self._set_ATV_TV_dynamics(i, N_TV, x_tv0, y_tv0, mu_tv, sigma_tv)
         self._set_TV_ref(i, N_TV, x_tv0, y_tv0, mu_tv)
+
+
+
+
+class SMPC_MMPreds_OL():
+
+    def __init__(self,
+                N            = 10,
+                DT           = 0.2,
+                L_F          = 1.7213,
+                L_R          = 1.4987,
+                V_MIN        = 0.,
+                V_MAX        = 15.0,
+                N_modes_MAX  =  3,
+                N_TV_MAX     =  1,
+                N_seq_MAX    =  50,
+                T_BAR_MAX    =  4,
+                D_MIN        =  4.,
+                TIGHTENING   =  1.5,
+                NOISE_STD    =  [0.01, 0.01, 0.01, .9, 0.1], # process noise standard deviations in order [w_x, w_y, w_theta, w_v, w_TV]
+                Q = [0.1*5., 0.1*5., 1*10., 0.1*1.], # weights on x, y, and v.
+                R = [.001*10., .1*100.]       # weights on inputs
+                # Q = [5., 5., 10., 1.], # weights on x, y, and v.
+                # R = [1., 100.]       # weights on inputs
+                ):
+        self.N=N
+        self.DT=DT
+        self.L_F=L_F
+        self.L_R=L_R
+        self.V_MIN=V_MIN
+        self.V_MAX=V_MAX
+        self.N_modes=N_modes_MAX
+        self.N_TV_max=N_TV_MAX
+        self.N_seq_max=N_seq_MAX
+        self.t_bar_max=T_BAR_MAX
+        self.d_min=D_MIN
+        self.tight=TIGHTENING
+        self.noise_std=NOISE_STD
+        self.Q = ca.diag(Q)
+        self.R = ca.diag(R)
+
+
+        self.opti=ca.Opti("conic")
+        p_opts_grb = {'OutputFlag': 0}
+        # s_opts_grb = {'CPUtime': 1.15}
+        self.opti.solver("gurobi", {}, p_opts_grb)
+
+
+        self.z_ref=self.opti.parameter(4, self.N+1)
+        self.x_ref=self.z_ref[0, :]
+        self.y_ref=self.z_ref[1, :]
+        self.psi_ref=self.z_ref[2, :]
+        self.v_ref=self.z_ref[3, :]
+        self.u_ref=self.opti.parameter(2, self.N)
+        self.a_ref=self.u_ref[0, :]
+        self.df_ref=self.u_ref[1, :]
+        self.dz_curr=self.opti.parameter(4)
+
+        self.Mu_tv = [ [ self.opti.parameter(self.N, 2) for _ in range(self.N_modes) ] for _ in range(self.N_TV_max) ]
+        self.Sigma_tv   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N) ] for _ in range(self.N_modes) ] for _ in range(self.N_TV_max) ]
+        self.Sigma_tv_sqrt  =  [ [ [ self.opti.parameter(2, 2) for _ in range(self.N) ] for _ in range(self.N_modes) ] for _ in range(self.N_TV_max) ]
+
+        self.policy=self._return_policy_class()
+        self.slacks=self.opti.variable(1)
+
+
+        self._add_constraints_and_cost(self.N_TV_max)
+        self.u_ref_val=np.zeros((2,1))
+        self.v_next=np.array(5.)
+        self._update_ev_initial_condition(0., 0., np.pi*0., 5.0 )
+        self._update_tv_initial_condition(self.N_TV_max*[20.0], self.N_TV_max*[20.0] )
+        self._update_ev_reference([self.DT *5.0* (x) for x in range(self.N+1)],
+                                  [self.DT *0.0* (x) for x in range(self.N+1)], (self.N+1)*[np.pi*0.], (self.N+1)*[5.0], self.N*[0.0], self.N*[0.0] )
+        self._update_tv_preds(self.N_TV_max*[20.0], self.N_TV_max*[20.0], self.N_TV_max*[20*np.ones((self.N_modes, self.N, 2))], self.N_TV_max*[np.stack(self.N_modes*[self.N*[np.identity(2)]])])
+
+        self.solve()
+
+
+    def _return_policy_class(self):
+
+        
+    	h=self.opti.variable(2, self.N)
+
+        return h
+                    
+
+    def _get_LTV_EV_dynamics(self):
+
+        A=[ca.MX(4, 4) for n in range(self.N)]
+        B=[ca.MX(4, 2) for n in range(self.N)]
+
+        for t in range(self.N):
+            beta = ca.atan( self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_ref[t]) )
+            dbeta = self.L_R/(1+(self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_ref[t]))**2)/(self.L_R+self.L_F)/ca.cos(self.df_ref[t])**2
+
+            A[t]=ca.MX(4,4)
+
+            A[t][0,2]+=self.DT*(-self.v_ref[t]*ca.sin(self.psi_ref[t]+beta))
+            A[t][0,3]+=self.DT*(ca.cos(self.psi_ref[t]+beta))
+            A[t][1,2]+=self.DT*(self.v_ref[t]*ca.cos(self.psi_ref[t]+beta))
+            A[t][1,3]+=self.DT*(ca.sin(self.psi_ref[t]+beta))
+            A[t][2,2]+=self.DT*(self.v_ref[t]/self.L_R*ca.sin(beta))
+            A[t]=ca.expm(A[t])
+
+            B[t][0,1]=self.DT*(-self.v_ref[t]*ca.sin(self.psi_ref[t]+beta)*dbeta)
+            B[t][1,1]=self.DT*(self.v_ref[t]*ca.cos(self.psi_ref[t]+beta)*dbeta)
+            B[t][2,1]=self.DT*(self.v_ref[t]/self.L_R*ca.cos(beta)*dbeta)
+            B[t][3,0]=self.DT*1.0
+
+        	E=(ca.MX.eye(4))@ca.diag(self.noise_std[0:4])
+        
+
+        return A,B,E
+
+    def _oa_ev_ref(self, x_ev, y_ev, x_tv, y_tv):
+            # x_ref_ev=x_tv+self.d_min*(0.5*(x_ev[0]+x_ev[1])-x_tv)/ca.norm_2(0.5*ca.vertcat(x_ev[0]+x_ev[1],y_ev[0]+y_ev[1])-ca.vertcat(x_tv,y_tv))
+            # y_ref_ev=y_tv+self.d_min*(0.5*(y_ev[0]+y_ev[1])-y_tv)/ca.norm_2(0.5*ca.vertcat(x_ev[0]+x_ev[1],y_ev[0]+y_ev[1])-ca.vertcat(x_tv,y_tv))
+            x_ref_ev=x_tv+self.d_min*((x_ev[1])-x_tv)/ca.norm_2(ca.vertcat(x_ev[1],y_ev[1])-ca.vertcat(x_tv,y_tv))
+            y_ref_ev=y_tv+self.d_min*((y_ev[1])-y_tv)/ca.norm_2(ca.vertcat(x_ev[1],y_ev[1])-ca.vertcat(x_tv,y_tv))
+            return ca.vertcat(x_ref_ev,y_ref_ev)
+
+    def _add_constraints_and_cost(self,  N_TV):
+
+
+
+
+        [A,B,E]=self._get_LTV_EV_dynamics()
+        h=self.policy
+        slack=self.slacks
+        cost = 1000*slack@slack
+        self.opti.subject_to(slack>=0)
+        self.opti.subject_to( self.opti.bounded(self.V_MIN,
+                                                      self.v_ref[1]+A[0][3,:]@self.dz_curr+B[0][3,:]@h[:,0],
+                                                      self.V_MAX) )
+        
+        A_block=ca.MX((4)*self.N, 4)
+        B_block=ca.MX((4)*self.N, 2*self.N)
+        E_block=ca.MX((4)*self.N, (4)*self.N)
+
+        A_block[0:4, :]=A[0]
+        B_block[0:4,0:2]=B[0]
+        E_block[0:4, 0:4]=E
+        H=h[:,0]
+        
+
+        for t in range(1,self.N):
+        	for j in range(self.N_modes):
+	           	oa_ref=[self._oa_ev_ref([self.x_ref[t-1], self.x_ref[t]], [self.y_ref[t-1], self.y_ref[t]], self.Mu_tv[k][j][t-1,0], self.Mu_tv[k][j][t-1,1]) for k in range(N_TV)]
+	            # pdb.set_trace()
+	            for k in range(N_TV):
+
+	                soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-self.Mu_tv[k][j][t-1,:]).T@ca.horzcat(ca.MX.eye(2),-ca.MX.eye(2))@ca.diagcat(E_block[(t-1)*(4):t*(4)-2,:], self.Sigma_tv_sqrt[k][j][t-1])),
+	                                         slack+2*(oa_ref[k]-self.Mu_tv[k][j][t-1,:]).T@(self.z_ref[0:2,t]-oa_ref[k]+A_block[(t-1)*(4):t*(4)-2,:]@self.dz_curr+B_block[(t-1)*(4):t*(4)-2,:2*t]@H)-self.d_min**2\
+	                                         +(ca.norm_2(oa_ref[k]-self.Mu_tv[k][j][t-1,:]))**2)
+	                                               
+
+	                self.opti.subject_to(soc_constr>0)
+
+	                
+
+            A_block[t*(4):(t+1)*(4),:]=A[t]@A_block[(t-1)*(4):t*(4),:]
+
+            B_block[t*(4):(t+1)*(4),:]=A[t]@B_block[(t-1)*(4):t*(4),:]
+            B_block[t*(4):t*(4)+4,t*2:(t+1)*2]=B[t]
+
+
+            E_block[t*(4):(t+1)*(4),0:t*(4)]=A[t]@E_block[(t-1)*(4):t*(4),0:t*(4)]
+            E_block[t*(4):(t+1)*(4),t*(4):(t+1)*(4)]=E
+
+            H=ca.vertcat(H, h[:,t])
+            nom_z_ev=A_block@self.dz_curr+B_block@H
+            cost_matrix=ca.kron(ca.MX.eye(self.N),self.Q)
+
+            # pdb.set_trace()
+            cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),self.R))
+
+        self.opti.minimize( cost )
+
+
+	def solve(self):
+        st = time.time()
+#         sol=self.opti[i].solve_limited()
+#         u_control  = sol.value(self.policy[i][0][:,0])
+#         v_tp1      = sol.value(self.v_ref[i][1]+self.dz_curr[i][3]+self.DT*h[0,0])
+#         is_opt     = True
+#         sol = self.opti[i].solve_limited()
+        try:
+            sol = self.opti.solve_limited()
+            # Optimal solution.
+            u_control  = sol.value(self.policy[i][0][:,0])
+#             z_opt  = sol.value(self.z_dv)
+# 			sl_mpc = sol.value(self.sl_dv)
+            v_tp1      = sol.value(self.v_ref[i][1]+self.dz_curr[3]+self.DT*self.policy[0,0])
+            is_opt     = True
+        except:
+
+            # Suboptimal solution (e.g. timed out).
+            u_control  = self.opti.debug.value(self.policy[:,0])
+            # pdb.set_trace()
+            # u_control  = self.u_ref_val
+            v_tp1      = self.opti.debug.value(self.v_ref[1]+self.dz_curr[3]+self.DT*self.policy[0,0])
+            # v_tp1      = self.v_next
+# 		sl_mpc = self.opti.debug.value(self.sl_dv)
+#             wp_ref  = self.opti[i].debug.value(self.wp_ref)
+            is_opt = False
+
+        solve_time = time.time() - st
+
+        sol_dict = {}
+        sol_dict['u_control']  = u_control  # control input to apply based on solution
+        sol_dict['v_next']     = v_tp1
+        sol_dict['optimal']    = is_opt      # whether the solution is optimal or not
+        sol_dict['solve_time'] = solve_time  # how long the solver took in seconds
+
+
+        return sol_dict
+
+	def update(self, update_dict):
+        self._update_ev_initial_condition( *[update_dict[key] for key in ['dx0', 'dy0', 'dpsi0', 'dv0']] )
+        self._update_ev_reference( *[update_dict[key] for key in ['x_ref', 'y_ref', 'psi_ref', 'v_ref', 'a_ref', 'df_ref']] )
+        self._update_tv_preds(  *[update_dict[key] for key in ['mus', 'sigmas']] )
+        self.u_ref_val=np.hstack((update_dict['a_ref'][0],update_dict['df_ref'][0]))
+        self.v_next=update_dict['v_ref'][1]
+        # pdb.set_trace()
+
+
+    def _update_ev_initial_condition(self, dx0, dy0, dpsi0, dvel0):
+        self.opti.set_value(self.dz_curr, ca.DM([dx0, dy0, dpsi0, dvel0]))
+
+
+    def _update_ev_reference(self, x_ref, y_ref, psi_ref, v_ref, a_ref, df_ref):
+        self.opti.set_value(self.x_ref,   x_ref)
+        self.opti.set_value(self.y_ref,   y_ref)
+        self.opti.set_value(self.psi_ref, psi_ref)
+        self.opti.set_value(self.v_ref,   v_ref)
+        self.opti.set_value(self.a_ref,   a_ref)
+        self.opti.set_value(self.df_ref,   df_ref)
+
+    def _update_tv_preds(self, mu_tv, sigma_tv):
+
+    	for t in range(self.N):
+            for j in range(self.N_modes):
+            	self.opti.set_value(self.Mu_tv[k][j], mu_tv[k][j,:,:] )
+                for k in range(self.N_TV_max):
+                	self.opti.set_value(self.Sigma_tv[k][j][t], sigma_tv[k][j,t,:,:] )
+                    self.opti.set_value(self.Sigma_tv_sqrt[k][j][t], ca.chol(sigma_tv[k][j,t,:,:]) )
