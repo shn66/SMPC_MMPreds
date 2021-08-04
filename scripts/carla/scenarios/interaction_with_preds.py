@@ -19,6 +19,7 @@ sys.path.append(scriptdir)
 from policies.frenet_pid_agent import FrenetPIDAgent
 from policies.smpc_agent import SMPCAgent
 from policies.mpc_agent import MPCAgent
+from policies.bl_smpc_agent import BLMPCAgent
 
 from rasterizer.agent_history import AgentHistory
 from rasterizer.sem_box_rasterizer import SemBoxRasterizer
