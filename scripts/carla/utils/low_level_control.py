@@ -3,6 +3,7 @@ import os
 import sys
 import numpy as np
 
+
 class LowLevelControl:
     def __init__(self, vehicle):
         # Control setup and parameters.
@@ -11,7 +12,7 @@ class LowLevelControl:
         self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
 
         # Throttle Parameters
-        self.k_v  = 0.8  # P gain on velocity tracking error (throttle)
+        self.k_v  = 0.9  # P gain on velocity tracking error (throttle)
         self.thr_ff_map  = np.column_stack(([  2.5,  7.5,  12.5,  17.5],
                                             [0.325, 0.45, 0.525, 0.625]))
 
@@ -39,6 +40,7 @@ class LowLevelControl:
             control.brake    = self.alpha * control.brake    + (1. - self.alpha) * self.control_prev.brake
 
         # Steering control.  Flipped sign due to Carla LHS convention.
+
         control.steer    = -df_des / self.max_steer_angle
         control.steer    = self.alpha * control.steer    + (1. - self.alpha) * self.control_prev.steer
 

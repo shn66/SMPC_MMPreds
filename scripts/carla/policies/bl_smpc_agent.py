@@ -39,7 +39,7 @@ class BLMPCAgent(object):
         self._frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
 
         # TODO: remove hard-coded values.
-        self.nominal_speed = 12.0 # m/s
+        self.nominal_speed = 8.0 # m/s
         self.lat_accel_max = 3.0  # m/s^2
 
         self._setup_mpc()
@@ -90,11 +90,11 @@ class BLMPCAgent(object):
         update_dict = {'x0'      : x,
                        'y0'      : y,
                        'psi0'    : psi,
-                       'v0'      : speed,
-                       'mus'     : target_vehicle_gmm_preds[0],
-                       'sigmas'  : target_vehicle_gmm_preds[1]}
+                       'v0'      : speed}
+
 
         update_dict.update( self._get_reference_traj(**update_dict) )
+        update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1] })
         # update_dict['tv_refs']  = self._get_target_vehicles(x, y)
 
         if self.warm_start:
@@ -134,12 +134,12 @@ class BLMPCAgent(object):
         #     plt.xlabel('y'); plt.ylabel('x')
 
         #     plt.subplot(312)
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 2], 'kx')
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 2], 'r')
+        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 2], 'kx')
+        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 2], 'r')
 
         #     plt.subplot(313)
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 3], 'kx')
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 3], 'r')
+        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 3], 'kx')
+        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 3], 'r')
 
         #     plt.suptitle(f"ACC:{sol_dict['u_mpc'][0,0]}, V:{sol_dict['z_mpc'][1,3]}, ST:{sol_dict['u_mpc'][0,1]}")
 
@@ -166,7 +166,7 @@ class BLMPCAgent(object):
             t_fits.append( (sn - s) / v_curr + t_fits[-1] )
 
         # Interpolate the points at time discretization dt.
-        t_disc    = np.arange(t_fits[0], t_fits[-1] + self.DT/2, self.DT)
+        t_disc    = np.arange(t_fits[0], t_fits[-1] + self.dt/2, self.dt)
         s_disc    = np.interp(t_disc, t_fits, traj[:,0])
         x_disc    = np.interp(t_disc, t_fits, traj[:,1])
         y_disc    = np.interp(t_disc, t_fits, traj[:,2])
@@ -183,7 +183,7 @@ class BLMPCAgent(object):
 
         closest_idx = np.argmin( np.linalg.norm(self.reference[:, 1:3] - np.array([x0, y0]), axis=-1) )
 
-        t_ref = self.reference[closest_idx, 0] + np.array([x*self.DT for x in range(1, self.N+1)])
+        t_ref = self.reference[closest_idx, 0] + np.array([x*self.dt for x in range(1, self.N+1)])
 
         ref_dict['x_ref']   = np.interp(t_ref, self.reference[:, 0], self.reference[:, 1])
         ref_dict['y_ref']   = np.interp(t_ref, self.reference[:, 0], self.reference[:, 2])
@@ -233,9 +233,9 @@ class BLMPCAgent(object):
     #         y_preds = []
 
     #         for _ in range(self.N_PRED_TV):
-    #             act_xn = act_x   + act_v * np.cos(act_psi) * self.DT
-    #             act_yn = act_y   + act_v * np.sin(act_psi) * self.DT
-    #             act_pn = act_psi + act_w * self.DT
+    #             act_xn = act_x   + act_v * np.cos(act_psi) * self.dt
+    #             act_yn = act_y   + act_v * np.sin(act_psi) * self.dt
+    #             act_pn = act_psi + act_w * self.dt
 
     #             x_preds.append(act_xn)
     #             y_preds.append(act_yn)
@@ -261,16 +261,16 @@ class BLMPCAgent(object):
     ################################################################################################
     def _setup_mpc(self,
                    N          =   10,   # timesteps in MPC Horizon
-                   DT         =  0.2,   # discretization time between timesteps (s)
+                   dt         =  0.2,   # discretization time between timesteps (s)
                    N_PRED_TV  =   10,   # timesteps for target vehicle prediction
-                   N_TV_MODES  =   2,   # modes for target vehicle prediction
+                   N_modes    =    2,   # modes for target vehicle prediction
                    NUM_TVS    =    1,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  16.0,  # square of minimum 2-norm distance to a target vehicle
-                   RISK		  =  0.05,			
-                   L_F        =  1.5,   # distance from CoG to front axle (m) [guesstimate]
-                   L_R        =  1.5,   # distance from CoG to rear axle (m) [guesstimate]
+                   D_MIN_SQ   =  9.0,  # square of minimum 2-norm distance to a target vehicle
+                   RISK       =  0.1,
+                   L_F        =  1.7213,   # distance from CoG to front axle (m) [guesstimate]
+                   L_R        =  1.4987,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
-                   V_MAX      = 20.0,
+                   V_MAX      = 15.0,
                    A_MIN      = -3.0,   # min/max acceleration constraint (m/s^2)
                    A_MAX      =  2.0,
                    DF_MIN     = -0.5,   # min/max front steer angle constraint (rad)
@@ -279,9 +279,9 @@ class BLMPCAgent(object):
                    A_DOT_MAX  =  1.5,
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
-                   C_OBS_SL   = 1000,      # weights for slack on collision avoidance (norm constraint).
-                   Q = [1., 1., 10., 0.1], # weights on x, y, and v.
-                   R = [10., 100.]):
+                   C_OBS_SL   = 10000,      # weights for slack on collision avoidance (norm constraint).
+                   Q = [100., 100., 500., 1], # weights on x, y, and v.
+                   R = [1., 10.]):
                    # Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
                    # R = [10., 100.]):       # weights on jerk and slew rate (steering angle derivative)
 
@@ -308,8 +308,8 @@ class BLMPCAgent(object):
         self.v_ref   = self.z_ref[:,3]
 
         # Collision Avoidance: mean, variance per mode for each target vehicle (spoofed if not present) along horizon.
-        self.tv_means = [ [ self.opti.parameter(self.N_PRED_TV, 2) for _ in range(self.N_TV_MODES) ] for _ in range(self.NUM_TVS) ]
-        self.tv_covs   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_TV_MODES) ] for _ in range(self.NUM_TVS) ]
+        self.tv_means = [ [ self.opti.parameter(self.N_PRED_TV, 2) for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+        self.tv_covs   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
 
         """ Decision Variables """
         self.z_dv = self.opti.variable(self.N+1, 4)  # solution trajectory starting at timestep 0.
@@ -335,15 +335,15 @@ class BLMPCAgent(object):
 
         self._update_initial_condition(0., 0., 0., 1.)
 
-        self._update_reference([self.DT * (x+1) for x in range(self.N)],
+        self._update_reference([self.dt * (x+1) for x in range(self.N)],
                                self.N*[0.],
                                self.N*[0.],
                                self.N*[1.])
 
         self._update_previous_input(0., 0.)
 
-        tv_means_fake = self.NUM_TVS*[1000*np.ones((self.N_TV_MODES, self.N_PRED_TV, 2))]
-        tv_covs_fake   = self.NUM_TVS*[np.stack(self.N_TV_MODES*[self.N_PRED_TV*[np.identity(2)]])]
+        tv_means_fake = self.NUM_TVS*[1000*np.ones((self.N_modes, self.N_PRED_TV, 2))]
+        tv_covs_fake   = self.NUM_TVS*[np.stack(self.N_modes*[self.N_PRED_TV*[np.identity(2)]])]
         self._update_obstacles(tv_means_fake, tv_covs_fake)
 
         self.opti.solver("ipopt", {"expand": True}, {"max_cpu_time": 0.1, "print_level": 0})
@@ -365,31 +365,31 @@ class BLMPCAgent(object):
         # State Dynamics Constraints
         for i in range(self.N):
             beta = casadi.atan( self.L_R / (self.L_F + self.L_R) * casadi.tan(self.df_dv[i]) )
-            self.opti.subject_to( self.x_dv[i+1]   == self.x_dv[i]   + self.DT * (self.v_dv[i] * casadi.cos(self.psi_dv[i] + beta)) )
-            self.opti.subject_to( self.y_dv[i+1]   == self.y_dv[i]   + self.DT * (self.v_dv[i] * casadi.sin(self.psi_dv[i] + beta)) )
-            self.opti.subject_to( self.psi_dv[i+1] == self.psi_dv[i] + self.DT * (self.v_dv[i] / self.L_R * casadi.sin(beta)) )
-            self.opti.subject_to( self.v_dv[i+1]   == self.v_dv[i]   + self.DT * (self.acc_dv[i]) )
+            self.opti.subject_to( self.x_dv[i+1]   == self.x_dv[i]   + self.dt * (self.v_dv[i] * casadi.cos(self.psi_dv[i] + beta)) )
+            self.opti.subject_to( self.y_dv[i+1]   == self.y_dv[i]   + self.dt * (self.v_dv[i] * casadi.sin(self.psi_dv[i] + beta)) )
+            self.opti.subject_to( self.psi_dv[i+1] == self.psi_dv[i] + self.dt * (self.v_dv[i] / self.L_R * casadi.sin(beta)) )
+            self.opti.subject_to( self.v_dv[i+1]   == self.v_dv[i]   + self.dt * (self.acc_dv[i]) )
 
         # Input Bound Constraints
         self.opti.subject_to( self.opti.bounded(self.A_MIN,  self.acc_dv, self.A_MAX) )
         self.opti.subject_to( self.opti.bounded(self.DF_MIN, self.df_dv,  self.DF_MAX) )
 
         # Input Rate Bound Constraints
-        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT -  self.sl_acc_dv[0],
+        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.dt -  self.sl_acc_dv[0],
                                                  self.acc_dv[0] - self.u_prev[0],
-                                                 self.A_DOT_MAX*self.DT   + self.sl_acc_dv[0]) )
+                                                 self.A_DOT_MAX*self.dt   + self.sl_acc_dv[0]) )
 
-        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.DT  -  self.sl_df_dv[0],
+        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.dt  -  self.sl_df_dv[0],
                                                  self.df_dv[0] - self.u_prev[1],
-                                                 self.DF_DOT_MAX*self.DT  + self.sl_df_dv[0]) )
+                                                 self.DF_DOT_MAX*self.dt  + self.sl_df_dv[0]) )
 
         for i in range(self.N - 1):
-            self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT   -  self.sl_acc_dv[i+1],
+            self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.dt   -  self.sl_acc_dv[i+1],
                                                      self.acc_dv[i+1] - self.acc_dv[i],
-                                                     self.A_DOT_MAX*self.DT   + self.sl_acc_dv[i+1]) )
-            self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.DT  -  self.sl_df_dv[i+1],
+                                                     self.A_DOT_MAX*self.dt   + self.sl_acc_dv[i+1]) )
+            self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.dt  -  self.sl_df_dv[i+1],
                                                      self.df_dv[i+1]  - self.df_dv[i],
-                                                     self.DF_DOT_MAX*self.DT  + self.sl_df_dv[i+1]) )
+                                                     self.DF_DOT_MAX*self.dt  + self.sl_df_dv[i+1]) )
         # Slack Constraints
         self.opti.subject_to( 0 <= self.sl_df_dv )
         self.opti.subject_to( 0 <= self.sl_acc_dv )
@@ -399,31 +399,31 @@ class BLMPCAgent(object):
         return casadi.mtimes(z, casadi.mtimes(Q, z.T))
 
     def _add_obstacle_avoidance_constraints(self):
-    	# Implementation of Chance-Constraint approximation using VP inquality
+        # Implementation of Chance-Constraint approximation using VP inquality
 
 
 
-        self.opti.subject_to( self.sl_obst_dv>=0 )
+        self.opti.subject_to( self.sl_obst_dv==0 )
 
         for k in range(self.NUM_TVS):
-        	for j in range(self.N_TV_MODES):
-            	for i in range(self.N_PRED_TV):
+            for j in range(self.N_modes):
+                for i in range(self.N_PRED_TV):
 
-            		# Mean and Covariance of a generalized chi^2 distribution
+                    # Mean and Covariance of a generalized chi^2 distribution
 
-            		mu_oac    = self.tv_covs[k][j][i][0,0]**2@(1+(self.tv_means[k][j][i,0]-self.z_dv[i+1, 0])**2/self.tv_covs[k][j][i][0,0]**2)+\
-            			        self.tv_covs[k][j][i][1,1]**2@(1+(self.tv_means[k][j][i,1]-self.z_dv[i+1, 1])**2/self.tv_covs[k][j][i][1,1]**2)-self.D_MIN_SQ
+                    mu_oac    = self.tv_covs[k][j][i][0,0]**2@(1+(self.tv_means[k][j][i,0]-self.z_dv[i+1, 0])**2/self.tv_covs[k][j][i][0,0]**2)+\
+                                self.tv_covs[k][j][i][1,1]**2@(1+(self.tv_means[k][j][i,1]-self.z_dv[i+1, 1])**2/self.tv_covs[k][j][i][1,1]**2)-self.D_MIN_SQ
 
-            		sigma_oac = self.tv_covs[k][j][i][0,0]**4@(1+2*(self.tv_means[k][j][i,0]-self.z_dv[i+1, 0])**2/self.tv_covs[k][j][i][0,0]**2)+\
-            			        self.tv_covs[k][j][i][1,1]**4@(1+2*(self.tv_means[k][j][i,1]-self.z_dv[i+1, 1])**2/self.tv_covs[k][j][i][1,1]**2)
+                    sigma_oac = self.tv_covs[k][j][i][0,0]**4@(1+2*(self.tv_means[k][j][i,0]-self.z_dv[i+1, 0])**2/self.tv_covs[k][j][i][0,0]**2)+\
+                                self.tv_covs[k][j][i][1,1]**4@(1+2*(self.tv_means[k][j][i,1]-self.z_dv[i+1, 1])**2/self.tv_covs[k][j][i][1,1]**2)
 
-            		# VP NECESSARY CONDITION INEQUALITY	        
-            		self.opti.subject_to( mu_oac -np.sqrt(5/3)*casadi.sqrt(sigma_oac) >= -self.sl_obst_dv[i] )
-            		# VP CONCENTRATION INEQUALITY
-            		self.opti.subject_to( 4/9*(sigma_oac) -self.RISK*(sigma_oac+mu_oac**2) <= self.sl_obst_dv[i] )
+                    # VP NECESSARY CONDITION INEQUALITY
+                    self.opti.subject_to( mu_oac -np.sqrt(5/3)*casadi.sqrt(sigma_oac) >= -self.sl_obst_dv[i] )
+                    # VP CONCENTRATION INEQUALITY
+                    self.opti.subject_to( 4/9*(sigma_oac) -self.RISK*(sigma_oac+mu_oac**2) <= self.sl_obst_dv[i] )
 
-            		# # OLD DETERMINISTIC CONSTRAINT
-              #   	self.opti.subject_to( self.D_MIN_SQ - self.sl_obst_dv[i] <= self._quad_form(self.z_dv[i+1, :2] - tv_ref[i, :], casadi.MX.eye(2)) )
+                    # # OLD DETERMINISTIC CONSTRAINT
+              #     self.opti.subject_to( self.D_MIN_SQ - self.sl_obst_dv[i] <= self._quad_form(self.z_dv[i+1, :2] - tv_ref[i, :], casadi.MX.eye(2)) )
 
     def _add_cost(self):
         cost = 0
@@ -454,10 +454,10 @@ class BLMPCAgent(object):
     def _update_obstacles(self, tv_means, tv_covs):
         assert len(tv_means) == self.NUM_TVS
         for k in range(self.NUM_TVS):
-        	for j in range(self.N_TV_MODES):
-        		self.opti.set_value(self.tv_means[k][j], tv_means[k][j,:,:])
-        		for i in range(self.N_PRED_TV):
-            		self.opti.set_value(self.tv_covs[k][j][i], tv_covs[k][j][i])
+            for j in range(self.N_modes):
+                self.opti.set_value(self.tv_means[k][j], tv_means[k][j,:,:])
+                for i in range(self.N_PRED_TV):
+                    self.opti.set_value(self.tv_covs[k][j][i], tv_covs[k][j][i])
 
     def _update(self, update_dict):
         self._update_initial_condition( *[update_dict[key] for key in ['x0', 'y0', 'psi0', 'v0']] )

@@ -46,20 +46,20 @@ STATIC_CARS = [[1, 0], # facing south
 SAVEDMODELH5 = os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_multipath_10/'
 ANCHORS      = np.load(os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_clusters_16.npy')
 
-SCENARIO_CASE = 2
+SCENARIO_CASE = 0
 DYNAMIC_CARS = []
 if SCENARIO_CASE == 0:
     DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L'], SMPCAgent],       # facing east, turn left towards north
                      [[2,0,'L'], [2,1,'L'], MPCAgent]]  # oncoming driving west
 elif SCENARIO_CASE == 1:
     DYNAMIC_CARS  = [[[0,0,'R'], [1,1,'R'], SMPCAgent],       # facing east, turn right towards south
-                     [[2,0,'L'], [1,1,'L'], MPCAgent]]  # facing west, turning left towards south
+                     [[2,0,'L'], [1,1,'L'], MPCAgent]]          # facing west, turning left towards south
 elif SCENARIO_CASE == 2:
     DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L'], SMPCAgent],       # facing east, turn left towards north
                      [[2,0,'L'], [1,1,'L'], MPCAgent]]  # facing west, turning left towards south
 elif SCENARIO_CASE == 3:
-    DYNAMIC_CARS  = [[[0,0,'L'], [0,1,'L'], SMPCAgent],       # driving east
-                     [[2,0,'L'], [2,1,'L'], FrenetPIDAgent]]  # oncoming driving west
+    DYNAMIC_CARS  = [[[0,0,'L'], [0,1,'R'], SMPCAgent],       # driving east
+                     [[2,0,'L'], [1,1,'L'], MPCAgent]]  # facing west, turning left towards south
 else:
     raise NotImplemented("That scenario has not been made yet.")
 
@@ -133,7 +133,7 @@ def setup_dynamic_cars(world):
             goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
         else:
             start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
-            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
+            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 25.)
 
         if start[2] == 'L':
             start_pose = shift_pose_across_lane(start_pose)
@@ -163,7 +163,7 @@ def setup_camera(world):
     cam_transform = carla.Transform(cam_loc, cam_ori)
 
     bp_drone.set_attribute('image_size_x', str(1920))
-    bp_drone.set_attribute('image_size_x', str(1080))
+    bp_drone.set_attribute('image_size_y', str(1080))
     bp_drone.set_attribute('fov', str(90))
     bp_drone.set_attribute('role_name', 'drone')
     drone = world.spawn_actor(bp_drone, cam_transform)
@@ -216,6 +216,7 @@ def get_target_agent_history(agent_history, target_agent_id):
     return transform_to_local_frame(motion_hist_array)
 
 def main():
+    # np.random.seed(2021)
     static_vehicle_list = []
     dynamic_vehicle_list = []
     dynamic_policy_list = []
@@ -236,7 +237,7 @@ def main():
         fps = 20                   # FPS for the simulation under synchronous mode (TODO: finalize)
         use_spectator_view = False # Flag to indicate whether to overwrite default drone view with spectator view
         opencv_viz = True         # Flag to indicate whether to create an external window to view the drone view
-        save_avi   = True        # Flag to indicate whether to save an avi of the drone view.
+        save_avi   = True    # Flag to indicate whether to save an avi of the drone view.
 
         # Predictions Setup
         agent_history = AgentHistory(world.get_actors())
@@ -248,9 +249,9 @@ def main():
         ego_agent_id    = []
         ego_policy      = []
         for vehicle, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
-            if type(policy) is not SMPCAgent:
+            if type(policy) is not SMPCAgent and type(policy) is not BLMPCAgent:
                 target_agent_id.append(vehicle.id)
-            elif type(policy) is SMPCAgent:
+            elif type(policy) is SMPCAgent or type(policy) is BLMPCAgent:
                 ego_agent_id.append(vehicle.id)
                 ego_policy = policy
             else:
@@ -267,7 +268,7 @@ def main():
 
             writer = None
             if save_avi:
-                writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (960, 500))
+                writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (1920, 1080))
 
             for veh_actor in dynamic_vehicle_list:
                 # TODO: clean this up, quick hack:
@@ -284,7 +285,8 @@ def main():
                       carla.Color(r=255, g=255, b=0),
                       carla.Color(r=0, g=255, b=255),
                       ]
-            mean_box_extent = carla.Vector3D(x=0.2, y=0.2, z=0.2)
+            opencv_colors = [(255, 0, 255), (255, 255, 0), (0, 255, 255)] # TODO: cleanup
+            mean_box_extent = carla.Vector3D(x=1.5, y=1.5, z=0.2)
             box_rotation    = carla.Rotation(pitch=0., yaw=0., roll=0.)
 
             while not completed:
@@ -295,7 +297,7 @@ def main():
                 img_array = np.frombuffer(img.raw_data, dtype=np.uint8)
                 img_array = np.reshape(img_array, (img.height, img.width, 4))
                 img_array = img_array[:, :, :3]
-                img_array = cv2.resize(img_array, (960, 500), interpolation = cv2.INTER_AREA)
+                img_array = cv2.resize(img_array, (1920, 1080), interpolation = cv2.INTER_AREA)
 
                 # Make predictions for the target vehicle (TODO: every time?)
                 img_tv = rasterizer.rasterize(agent_history, target_agent_id, render_traffic_lights=False)
@@ -308,18 +310,19 @@ def main():
                 if np.any(np.isnan(past_states_tv)):
                     # pass # Not enough data for predictions to be made.
                     target_vehicle_positions = [curr_target_vehicle_position]
-                    target_vehicle_gmm_preds = [[np.stack([[curr_target_vehicle_position]*ego_policy.SMPC.N]*ego_policy.SMPC.N_modes)],
-                                                [np.stack([[np.identity(2)]*ego_policy.SMPC.N]*ego_policy.SMPC.N_modes)]]
+                    target_vehicle_gmm_preds = [[np.stack([[curr_target_vehicle_position]*ego_policy.N]*ego_policy.N_modes)],
+                                                [np.stack([[np.identity(2)]*ego_policy.N]*ego_policy.N_modes)]]
                     # import pdb; pdb.set_trace()
                     # print(len(target_vehicle_gmm_preds[0]))
                 else:
                     gmm_pred_tv = pred_model.predict_instance(img_tv, past_states_tv[:-1])
                     gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
-                    gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(ego_policy.SMPC.N_modes)
-                    target_vehicle_gmm_preds = [[gmm_pred_tv.mus[:, :ego_policy.SMPC.N, :]], [gmm_pred_tv.sigmas[:, :ego_policy.SMPC.N, :, :]]]
+                    gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(ego_policy.N_modes)
+                    mode_probabilities=gmm_pred_tv.mode_probabilities
+                    target_vehicle_gmm_preds = [[gmm_pred_tv.mus[:, :ego_policy.N, :]], [gmm_pred_tv.sigmas[:, :ego_policy.N, :, :]]]
                     target_vehicle_positions = [curr_target_vehicle_position]
 
-                    for mean_traj, color in zip(target_vehicle_gmm_preds[0][0], colors):
+                    for mean_traj, color in zip(reversed(target_vehicle_gmm_preds[0][0]), reversed(colors)):
                         for mean_pos in mean_traj:
                             loc = carla.Location(x=float(mean_pos[0]),
                                                  y=-float(mean_pos[1]),
@@ -337,14 +340,24 @@ def main():
                 # Handle updating the dynamic cars.  Terminate once all cars reach the goal.
                 completed = True
                 for act, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
-                    if type(policy) is SMPCAgent:
+                    if type(policy) is SMPCAgent or type(policy) is BLMPCAgent:
                         control = policy.run_step(target_vehicle_positions, target_vehicle_gmm_preds)
 
                         # For debugging:
                         vel   = act.get_velocity()
                         speed = ((vel.x**2) + (vel.y**2))**0.5
                         probs_str = f"EGO - v:{speed:.3f}, th: {control.throttle:.2f}, bk: {control.brake:.2f}, st: {control.steer:.2f}"
-                        cv2.putText(img_array, probs_str, (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0))
+                        cv2.putText(img_array, probs_str, (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                        if ~np.any(np.isnan(past_states_tv)):
+                            cv2.putText(img_array, "Mode probabilities: ", (50,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            start_x, delta_x = 360, 100
+                            for prob_idx, mode_prob in enumerate(mode_probabilities):
+                                cv2.putText(img_array, f"{mode_prob:.3f}",
+                                            (start_x + prob_idx * delta_x, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, opencv_colors[prob_idx], 2)
+                        #cv2.putText(img_array, "Mode probabilities: ", (50,100) cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0) )
+                        # for i in range(3):
+                        #     mod_prob_str = f"EGO - v:{speed:.3f}, th: {control.throttle:.2f}, bk: {control.brake:.2f}, st: {control.steer:.2f}"
 
                     else:
                         control = policy.run_step()

@@ -28,9 +28,10 @@ class SMPCAgent(object):
 	def __init__(self,
 		         vehicle,                  # Vehicle object that this agent controls
 		         goal_location,            # desired goal location used to generate a path
-		         nominal_speed_mps = 12.0, # sets desired speed (m/s) for tracking path
+		         nominal_speed_mps =11.0, # sets desired speed (m/s) for tracking path
 		         dt =0.2,
-		         N=8                   # time discretization (s) used to generate a reference
+		         N=8,                   # time discretization (s) used to generate a reference
+		         N_modes = 3
 		         ):
 		self.vehicle = vehicle
 		self.map    = vehicle.get_world().get_map()
@@ -38,7 +39,7 @@ class SMPCAgent(object):
 		self.goal_location = goal_location
 		self.nominal_speed_mps  = nominal_speed_mps
 		self.N=N
-
+		self.N_modes=N_modes
 		self.planner = GlobalRoutePlanner( GlobalRoutePlannerDAO(self.map, sampling_resolution=0.5) )
 		self.planner.setup()
 
@@ -67,7 +68,7 @@ class SMPCAgent(object):
 		# self.feas_ref_states=self.feas_ref_dict['z_opt']
 		# self.feas_ref_inputs=self.feas_ref_dict['u_opt']
 
-
+		self.control_prev = np.zeros((2,1))
 		self.ol_flag=False
 		self.reference_regeneration()
 
@@ -102,11 +103,12 @@ class SMPCAgent(object):
 
 
 		# MPC initialization (might take a while....)
-		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt)
-		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt)
+		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes)
+		self.SMPC.noswitch_bl=False
+		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes)
 
 		# Control setup and parameters.
-		self.control_prev = carla.VehicleControl()
+
 		self.max_steer_angle = np.radians( self.vehicle.get_physics_control().wheels[0].max_steer_angle )
 		self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
 		self.k_v           = 0.6
@@ -156,7 +158,7 @@ class SMPCAgent(object):
 
 			self.ref_horizon= self.reference.shape[0]-1
 			self.ref_dict={'x_ref':self.reference[1:,1], 'y_ref':self.reference[1:,2], 'psi_ref':self.reference[1:,3], 'v_ref':self.reference[1:,4],
-							'x0'  : self.reference[0,1],  'y0'  : self.reference[0,2],  'psi0'  : self.reference[0,3],  'v0'  : self.reference[0,4]}
+							'x0'  : self.reference[0,1],  'y0'  : self.reference[0,2],  'psi0'  : self.reference[0,3],  'v0'  : self.reference[0,4], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
 			self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
 			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=self.dt)
 			self.feas_ref_gen.update(self.ref_dict)
@@ -174,7 +176,7 @@ class SMPCAgent(object):
 			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon-self.t_ref-1, DT=self.dt)
 
 			self.ref_dict={'x_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,0], 'y_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,1], 'psi_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,2], 'v_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,3],
-							'x0'  : x,  'y0'  : y,  'psi0'  : psi,  'v0'  : speed}
+							'x0'  : x,  'y0'  : y,  'psi0'  : psi,  'v0'  : speed, 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
 			self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
 			self.feas_ref_gen.update(self.ref_dict)
 			self.feas_ref_dict=self.feas_ref_gen.solve()
@@ -229,7 +231,7 @@ class SMPCAgent(object):
 			print("here?")
 		else:
 			# Run SMPC Preds.
-			if self.time%15==0 and self.time>0:
+			if self.time%35==0 and self.time>0:
 				self.reference_regeneration(x,y,psi,speed)
 
 			t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
@@ -248,15 +250,15 @@ class SMPCAgent(object):
 			if self.ol_flag:
 
 				self.SMPC_OL.update(update_dict)
-				sol_dict=self.SMPC.solve()
+				sol_dict=self.SMPC_OL.solve()
 
 				u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
 				v_next    = sol_dict['v_next']
 				print(f"\toptimal?: {sol_dict['optimal']}")
-				
-			else:		
+
+			else:
 				N_TV=len(target_vehicle_positions)
-				t_bar=3
+				t_bar=4
 				i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
 				self.SMPC.update(i, update_dict)
 				sol_dict=self.SMPC.solve(i)
@@ -264,14 +266,14 @@ class SMPCAgent(object):
 				u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
 				v_next    = sol_dict['v_next']
 				print(f"\toptimal?: {sol_dict['optimal']}")
-				# print(f"\tv_next: {sol_dict['v_next']}")
+				print(f"\tv_next: {sol_dict['v_next']}")
 				# print(f"\tv_ref_next: {self.feas_ref_states[self.t_ref+1,3]}")
 				# print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
-				# print(self.time)
-
+				print(self.time)
+			self.control_prev=u_control
 			control = self._low_level_control.update(speed,      # v_curr
                                                      sol_dict['u_control'][0]+update_dict['a_ref'][0], # a_des
                                                      sol_dict['v_next'], # v_des
                                                      sol_dict['u_control'][1]+update_dict['df_ref'][0]) # df_des
-			
+
 			return control

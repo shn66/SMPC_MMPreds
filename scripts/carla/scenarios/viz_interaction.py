@@ -152,7 +152,7 @@ def setup_camera(world):
 	cam_transform = carla.Transform(cam_loc, cam_ori)
 
 	bp_drone.set_attribute('image_size_x', str(1920))
-	bp_drone.set_attribute('image_size_x', str(1080))
+	bp_drone.set_attribute('image_size_y', str(1080))
 	bp_drone.set_attribute('fov', str(90))
 	bp_drone.set_attribute('role_name', 'drone')
 	drone = world.spawn_actor(bp_drone, cam_transform)
@@ -180,8 +180,8 @@ def main():
 		completed = False           # Flag to indicate when all cars have reached their destination
 		fps = 20                    # FPS for the simulation under synchronous mode
 		use_spectator_view = False  # Flag to indicate whether to overwrite default drone view with spectator view
-		opencv_viz = True           # Flag to indicate whether to create an external window to view the drone view
-		save_avi   = False          # Flag to indicate whether to save an avi of the drone view.
+		opencv_viz = False           # Flag to indicate whether to create an external window to view the drone view
+		save_avi   = True          # Flag to indicate whether to save an avi of the drone view.
 
 		with CarlaSyncMode(world, drone, fps=fps) as sync_mode:
 			if use_spectator_view:
@@ -190,7 +190,7 @@ def main():
 
 			writer = None
 			if save_avi:
-				writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (960, 500))
+				writer = cv2.VideoWriter('output.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (1920, 1080))
 
 			while not completed:
 				snap, img = sync_mode.tick(timeout=2.0)
@@ -199,7 +199,7 @@ def main():
 				img_array = np.frombuffer(img.raw_data, dtype=np.uint8)
 				img_array = np.reshape(img_array, (img.height, img.width, 4))
 				img_array = img_array[:, :, :3]
-				img_array = cv2.resize(img_array, (960, 500), interpolation = cv2.INTER_AREA)
+				img_array = cv2.resize(img_array, (1920, 1080), interpolation = cv2.INTER_AREA)
 
 				# Handle OpenCV stuff.
 				if opencv_viz:

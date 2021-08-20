@@ -39,9 +39,9 @@ class MPCAgent(object):
         self._frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
 
         # TODO: remove hard-coded values.
-        self.nominal_speed = 12.0 # m/s
+        self.nominal_speed = 14.0 # m/s
         self.lat_accel_max = 3.0  # m/s^2
-
+        np.random.seed(2021)
         self._setup_mpc()
 
         self._fit_velocity_profile()
@@ -112,12 +112,11 @@ class MPCAgent(object):
             self.warm_start['u_ws']       = sol_dict['u_mpc']
             self.warm_start['sl_ws']      = sol_dict['sl_mpc']
 
-
         # Get low level control.
         control =  self._low_level_control.update(update_dict['v0'],      # v_curr
                                                   sol_dict['u_mpc'][0,0], # a_des
-                                                  sol_dict['z_mpc'][1,3], # v_des
-                                                  sol_dict['u_mpc'][0,1]) # df_des
+                                                  sol_dict['z_mpc'][1,3],#+1*(np.random.rand(1)-0.5).item(), # v_des
+                                                  sol_dict['u_mpc'][0,1])#+0.6*(np.random.rand(1)-0.5).item()) # df_des
 
         # if self.counter % 10 == 0:
         #     plt.subplot(311)
@@ -261,7 +260,7 @@ class MPCAgent(object):
                    DT         =  0.2,   # discretization time between timesteps (s)
                    N_PRED_TV  =    5,   # timesteps for target vehicle prediction
                    NUM_TVS    =    5,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  16.0,  # square of minimum 2-norm distance to a target vehicle
+                   D_MIN_SQ   =  5.0,  # square of minimum 2-norm distance to a target vehicle
                    L_F        =  1.5,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.5,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
@@ -339,7 +338,7 @@ class MPCAgent(object):
         tv_refs_fake = [ 1000. * np.ones((self.N_PRED_TV,2)) for _ in range(self.NUM_TVS) ]
         self._update_obstacles(tv_refs_fake)
 
-        self.opti.solver("ipopt", {"expand": True}, {"max_cpu_time": 0.1, "print_level": 0})
+        self.opti.solver("ipopt", {"expand": False}, {"max_cpu_time": 0.1, "print_level": 0})
 
         sol = self._solve()
 
