@@ -46,7 +46,7 @@ STATIC_CARS = [[1, 0], # facing south
 SAVEDMODELH5 = os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_multipath_10/'
 ANCHORS      = np.load(os.path.abspath(__file__).split('carla')[0] + 'models/l5kit_clusters_16.npy')
 
-SCENARIO_CASE = 0
+SCENARIO_CASE = 1
 DYNAMIC_CARS = []
 if SCENARIO_CASE == 0:
     DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L'], SMPCAgent],       # facing east, turn left towards north
@@ -129,11 +129,11 @@ def setup_dynamic_cars(world):
         dyn_bp.set_attribute('color', color)
         start, goal, policy = start_goal_policy
         if i==0:
-            start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
-            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
+            start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -20.)
+            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 25.)
         else:
             start_pose = shift_pose_along_lane(INTERSECTION[start[0]][start[1]], -10.)
-            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 25.)
+            goal_pose  = shift_pose_along_lane(INTERSECTION[goal[0]][goal[1]], 20.)
 
         if start[2] == 'L':
             start_pose = shift_pose_across_lane(start_pose)
@@ -341,7 +341,7 @@ def main():
                 completed = True
                 for act, policy in zip(dynamic_vehicle_list, dynamic_policy_list):
                     if type(policy) is SMPCAgent or type(policy) is BLMPCAgent:
-                        control = policy.run_step(target_vehicle_positions, target_vehicle_gmm_preds)
+                        control,_,_ = policy.run_step(target_vehicle_positions, target_vehicle_gmm_preds)
 
                         # For debugging:
                         vel   = act.get_velocity()
@@ -360,7 +360,7 @@ def main():
                         #     mod_prob_str = f"EGO - v:{speed:.3f}, th: {control.throttle:.2f}, bk: {control.brake:.2f}, st: {control.steer:.2f}"
 
                     else:
-                        control = policy.run_step()
+                        control,_,_ = policy.run_step()
                     completed = completed and policy.done()
                     act.apply_control(control)
 

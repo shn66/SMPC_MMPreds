@@ -28,10 +28,12 @@ class SMPCAgent(object):
 	def __init__(self,
 		         vehicle,                  # Vehicle object that this agent controls
 		         goal_location,            # desired goal location used to generate a path
-		         nominal_speed_mps =11.0, # sets desired speed (m/s) for tracking path
+		         nominal_speed_mps =8.0, # sets desired speed (m/s) for tracking path
 		         dt =0.2,
 		         N=8,                   # time discretization (s) used to generate a reference
-		         N_modes = 3
+		         N_modes = 3,
+		         OL_BL_FLAG = False,
+		         NS_BL_FLAG = True
 		         ):
 		self.vehicle = vehicle
 		self.map    = vehicle.get_world().get_map()
@@ -69,7 +71,7 @@ class SMPCAgent(object):
 		# self.feas_ref_inputs=self.feas_ref_dict['u_opt']
 
 		self.control_prev = np.zeros((2,1))
-		self.ol_flag=False
+		self.ol_flag=OL_BL_FLAG
 		self.reference_regeneration()
 
 		# Debugging: see the reference solution.
@@ -103,8 +105,7 @@ class SMPCAgent(object):
 
 
 		# MPC initialization (might take a while....)
-		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes)
-		self.SMPC.noswitch_bl=False
+		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=NS_BL_FLAG)
 		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes)
 
 		# Control setup and parameters.
@@ -272,9 +273,10 @@ class SMPCAgent(object):
 				# print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
 				print(self.time)
 			self.control_prev=np.array([u_control[0]+update_dict['a_ref'][0],u_control[1]+update_dict['df_ref'][0]])
+			self.state_prev=np.array([x,y,psi,speed])
 			control = self._low_level_control.update(speed,      # v_curr
                                                      sol_dict['u_control'][0]+update_dict['a_ref'][0], # a_des
                                                      sol_dict['v_next'], # v_des
                                                      sol_dict['u_control'][1]+update_dict['df_ref'][0]) # df_des
 
-			return control
+		return control, self.state_prev, self.control_prev

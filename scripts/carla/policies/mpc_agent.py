@@ -39,7 +39,7 @@ class MPCAgent(object):
         self._frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
 
         # TODO: remove hard-coded values.
-        self.nominal_speed = 14.0 # m/s
+        self.nominal_speed = 9.0 # m/s
         self.lat_accel_max = 3.0  # m/s^2
         np.random.seed(2021)
         self._setup_mpc()
@@ -112,6 +112,9 @@ class MPCAgent(object):
             self.warm_start['u_ws']       = sol_dict['u_mpc']
             self.warm_start['sl_ws']      = sol_dict['sl_mpc']
 
+        state_prev=np.array([x,y,psi,speed])
+        control_prev=sol_dict['u_mpc'][0,:]
+
         # Get low level control.
         control =  self._low_level_control.update(update_dict['v0'],      # v_curr
                                                   sol_dict['u_mpc'][0,0], # a_des
@@ -143,7 +146,7 @@ class MPCAgent(object):
 
         # self.counter += 1
 
-        return control
+        return control, state_prev, control_prev
 
     ################################################################################################
     ########################## Helper / Update Functions ###########################################

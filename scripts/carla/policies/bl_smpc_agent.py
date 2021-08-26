@@ -115,7 +115,8 @@ class BLMPCAgent(object):
             self.warm_start['u_ws']       = sol_dict['u_mpc']
             self.warm_start['sl_ws']      = sol_dict['sl_mpc']
 
-
+        state_prev=np.array([x,y,psi,speed])
+        control_prev=sol_dict['u_mpc'][0,:]
         # Get low level control.
         control =  self._low_level_control.update(update_dict['v0'],      # v_curr
                                                   sol_dict['u_mpc'][0,0], # a_des
@@ -147,7 +148,7 @@ class BLMPCAgent(object):
 
         # self.counter += 1
 
-        return control
+        return control, state_prev, control_prev
 
     ################################################################################################
     ########################## Helper / Update Functions ###########################################
@@ -346,7 +347,7 @@ class BLMPCAgent(object):
         tv_covs_fake   = self.NUM_TVS*[np.stack(self.N_modes*[self.N_PRED_TV*[np.identity(2)]])]
         self._update_obstacles(tv_means_fake, tv_covs_fake)
 
-        self.opti.solver("ipopt", {"expand": True}, {"max_cpu_time": 0.1, "print_level": 0})
+        self.opti.solver("ipopt", {"expand": False}, {"max_cpu_time": 2.0, "print_level": 0})
 
         sol = self._solve()
 
@@ -498,7 +499,10 @@ class BLMPCAgent(object):
         sol_dict = {}
         sol_dict['u_control']   = u_mpc[0,:]  # control input to apply based on solution
         sol_dict['optimal']     = is_opt      # whether the solution is optimal or not
-        sol_dict['solve_time']  = solve_time  # how long the solver took in seconds
+        if not is_opt:
+            sol_dict['solve_time'] = np.nan  # how long the solver took in seconds
+        else:
+            sol_dict['solve_time'] = self.opti.stats()["t_wall_total"]  # how long the solver took in seconds
         sol_dict['u_mpc']       = u_mpc       # solution inputs (N by 2, see self.u_dv above)
         sol_dict['z_mpc']       = z_mpc       # solution states (N+1 by 4, see self.z_dv above)
         sol_dict['sl_mpc']      = sl_mpc      # solution slack vars (N by 2, see self.sl_dv above)
