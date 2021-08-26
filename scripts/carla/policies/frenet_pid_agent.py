@@ -109,7 +109,7 @@ class FrenetPIDAgent(object):
 
         # Steering control: just using feedback for now, could add feedforward based on curvature.
         control.steer    = self.k_ey * (ey + self.x_la * epsi) / self.max_steer_angle
-        control.steer    = self.alpha * control.steer    + (1. - self.alpha) * self.control_prev.steer+0.9*(np.random.rand(1)-0.3).item()
+        control.steer    = self.alpha * control.steer    + (1. - self.alpha) * self.control_prev.steer
 
         # Clip Carla control to limits.
         control.throttle = np.clip(control.throttle, 0.0, 1.0)

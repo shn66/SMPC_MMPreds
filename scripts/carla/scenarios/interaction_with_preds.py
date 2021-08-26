@@ -50,7 +50,7 @@ SCENARIO_CASE = 0
 DYNAMIC_CARS = []
 if SCENARIO_CASE == 0:
     DYNAMIC_CARS  = [[[0,0,'L'], [3,1,'L'], SMPCAgent],       # facing east, turn left towards north
-                     [[2,0,'L'], [2,1,'L'], MPCAgent]]  # oncoming driving west
+                     [[2,0,'L'], [2,1,'L'], FrenetPIDAgent]]  # oncoming driving west
 elif SCENARIO_CASE == 1:
     DYNAMIC_CARS  = [[[0,0,'R'], [1,1,'R'], SMPCAgent],       # facing east, turn right towards south
                      [[2,0,'L'], [1,1,'L'], MPCAgent]]          # facing west, turning left towards south
@@ -237,7 +237,7 @@ def main():
         fps = 20                   # FPS for the simulation under synchronous mode (TODO: finalize)
         use_spectator_view = False # Flag to indicate whether to overwrite default drone view with spectator view
         opencv_viz = True         # Flag to indicate whether to create an external window to view the drone view
-        save_avi   = True    # Flag to indicate whether to save an avi of the drone view.
+        save_avi   = False   # Flag to indicate whether to save an avi of the drone view.
 
         # Predictions Setup
         agent_history = AgentHistory(world.get_actors())
