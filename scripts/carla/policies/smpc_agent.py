@@ -231,7 +231,7 @@ class SMPCAgent(object):
 			print("here?")
 		else:
 			# Run SMPC Preds.
-			if self.time%35==0 and self.time>0:
+			if self.time%50==0 and self.time>0:
 				self.reference_regeneration(x,y,psi,speed)
 
 			t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
@@ -240,7 +240,7 @@ class SMPCAgent(object):
 						  'x_tv0': [target_vehicle_positions[k][0] for k in range(len(target_vehicle_positions))],        'y_tv0': [target_vehicle_positions[k][1] for k in range(len(target_vehicle_positions))],
 					 	 'x_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,3].T,
 					 	 'a_ref': self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.SMPC.N,1].T,
-					 	 'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1]}
+					 	 'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
 			# update_dict={  'dx0':x-self.feas_ref_states[self.t_ref,0],     'dy0':y-self.feas_ref_states[self.t_ref,1],         'dpsi0':psi-self.feas_ref_states[self.t_ref,2],       'dv0':speed-self.feas_ref_states[self.t_ref,3],
 			# 			  'x_tv0': [target_vehicle_positions[k][0] for k in range(len(target_vehicle_positions))],        'y_tv0': [target_vehicle_positions[k][1] for k in range(len(target_vehicle_positions))],
 			# 		 	 'x_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,3].T,
@@ -258,7 +258,7 @@ class SMPCAgent(object):
 
 			else:
 				N_TV=len(target_vehicle_positions)
-				t_bar=4
+				t_bar=3
 				i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
 				self.SMPC.update(i, update_dict)
 				sol_dict=self.SMPC.solve(i)
@@ -267,10 +267,11 @@ class SMPCAgent(object):
 				v_next    = sol_dict['v_next']
 				print(f"\toptimal?: {sol_dict['optimal']}")
 				print(f"\tv_next: {sol_dict['v_next']}")
+				print(f"\tsteering: {u_control[1]+update_dict['df_ref'][0]}")
 				# print(f"\tv_ref_next: {self.feas_ref_states[self.t_ref+1,3]}")
 				# print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
 				print(self.time)
-			self.control_prev=u_control
+			self.control_prev=np.array([u_control[0]+update_dict['a_ref'][0],u_control[1]+update_dict['df_ref'][0]])
 			control = self._low_level_control.update(speed,      # v_curr
                                                      sol_dict['u_control'][0]+update_dict['a_ref'][0], # a_des
                                                      sol_dict['v_next'], # v_des
