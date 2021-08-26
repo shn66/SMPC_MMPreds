@@ -19,7 +19,7 @@ from utils import frenet_trajectory_handler as fth
 from utils.low_level_control import LowLevelControl
 import matplotlib.pyplot as plt
 
-class BLMPCAgent(object):
+class BLSMPCAgent(object):
     """ A path following agent with collision avoidance constraints over a short horizon. """
 
     def __init__(self, vehicle, goal_location):
