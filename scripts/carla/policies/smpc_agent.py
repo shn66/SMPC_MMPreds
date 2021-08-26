@@ -32,8 +32,7 @@ class SMPCAgent(object):
 		         dt =0.2,
 		         N=8,                   # time discretization (s) used to generate a reference
 		         N_modes = 3,
-		         OL_BL_FLAG = False,
-		         NS_BL_FLAG = True
+		         smpc_config = "full"
 		         ):
 		self.vehicle = vehicle
 		self.map    = vehicle.get_world().get_map()
@@ -49,6 +48,16 @@ class SMPCAgent(object):
 
 		self.time=0
 		self.t_ref=0
+		if smpc_config=="full":
+			self.ol_flag=False
+			self.ns_bl_flag=False
+		elif smpc_config=="open_loop":
+			self.ol_flag=True
+			self.ns_bl_flag=False
+		else:
+			self.ol_flag=False
+			self.ns_bl_flag=True
+
 		# Get the high-level route using Carla's API (basically A* search over road segments).
 		# init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
 		# goal          = self.map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
@@ -71,7 +80,6 @@ class SMPCAgent(object):
 		# self.feas_ref_inputs=self.feas_ref_dict['u_opt']
 
 		self.control_prev = np.zeros((2,1))
-		self.ol_flag=OL_BL_FLAG
 		self.reference_regeneration()
 
 		# Debugging: see the reference solution.
@@ -105,7 +113,7 @@ class SMPCAgent(object):
 
 
 		# MPC initialization (might take a while....)
-		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=NS_BL_FLAG)
+		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag)
 		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes)
 
 		# Control setup and parameters.
