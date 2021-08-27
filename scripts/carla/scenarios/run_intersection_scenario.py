@@ -76,7 +76,7 @@ class VehicleParams:
     role          : str # either "ego" [dynamic, our agent], "static" [nonmoving vehicle], or "target" [dynamic vehicle, other agent]
     vehicle_type  : str # currently use one of {"vehicle.audi.tt", "vehicle.mercedes-benz.coupe"}
     vehicle_color : str # currently use "246, 246, 246" for static, "186, 0, 0" for ego, and "65, 63, 197" for dynamic
-    policy_type   : str # {"static", mpc", "smpc", "smpc_bl"} -> which control policy to use for this agent
+    policy_type   : str # {"static", mpc", "smpc", "blsmpc"} -> which control policy to use for this agent
 
     # Initial state and goal location selection.
     intersection_start_node_idx : int        # {0, 1, 2, 3} -> corresponds to a direction in the intersection_json above
@@ -86,7 +86,7 @@ class VehicleParams:
     start_longitudinal_offset   : float      # how far to move the car's start pose in its local fwd (i.e. longitudinal axis) direction (m)
     goal_longitudinal_offset    : float      # how far to move the car's goal pose in its local fwd (i.e. longitudinal axis) direction (m)
     nominal_speed               : float      # how fast the car should travel if unobstructed / not turning
-    init_speed                  : float = 0. # the car's initial speed in simulation (m/s)
+    init_speed                  : float      # the car's initial speed in simulation (m/s)
 
     # General MPC parameters.  Some of these can be ignored (e.g. n_modes if using MPCAgent).
     N         : int   = 10  # horizon of the MPC solution
@@ -135,7 +135,7 @@ def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
                         num_modes=vehicle_params.num_modes)
-    elif vehicle_params.policy_type == "smpc_bl":
+    elif vehicle_params.policy_type == "blsmpc":
         return BLSMPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
@@ -347,29 +347,39 @@ class RunIntersectionScenario:
             cv2.destroyAllWindows()
 
     def _make_predictions(self):
-        # TODO: clean up and generalize this to many target vehicles.
-        target_agent_id = self.vehicle_actors[self.tv_vehicle_idxs[0]].id
-        past_states_tv, R_target_to_world, t_target_to_world = \
-            get_target_agent_history(self.agent_history, target_agent_id)
-
-        curr_target_vehicle_position = R_target_to_world @ past_states_tv[-1, 1:3] + t_target_to_world
-        tvs_positions = [curr_target_vehicle_position]
-
-        if np.any(np.isnan(past_states_tv)):
-            # Not enough data for predictions to be made.
+        if len(self.tv_vehicle_idxs) == 0:
+            ego_location = self.vehicle_actors[self.ego_vehicle_idx].get_location()
+            ego_x, ego_y = ego_location.x, -ego_location.y
+            curr_target_vehicle_position = [1000 + ego_x, 1000 + ego_y]
+            tvs_positions = [curr_target_vehicle_position]
             tvs_mode_probs = [ np.ones(self.ego_num_modes) / self.ego_num_modes ]
             tvs_mode_dists = [[np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes)],
                               [np.stack([[np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
             tvs_valid_pred = [False]
         else:
-            img_tv = self.rasterizer.rasterize(agent_history, target_agent_id)
-            gmm_pred_tv = self.pred_model.predict_instance(img_tv, past_states_tv[:-1])
-            gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
-            gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(N_modes)
+            # TODO: clean up and generalize this to many target vehicles.
+            target_agent_id = self.vehicle_actors[self.tv_vehicle_idxs[0]].id
+            past_states_tv, R_target_to_world, t_target_to_world = \
+                get_target_agent_history(self.agent_history, target_agent_id)
 
-            tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
-            tvs_mode_dists = [[gmm_pred_tv.mus[:, :N, :]], [gmm_pred_tv.sigmas[:, :N, :, :]]]
-            tvs_valid_pred = [True]
+            curr_target_vehicle_position = R_target_to_world @ past_states_tv[-1, 1:3] + t_target_to_world
+            tvs_positions = [curr_target_vehicle_position]
+
+            if np.any(np.isnan(past_states_tv)):
+                # Not enough data for predictions to be made.
+                tvs_mode_probs = [ np.ones(self.ego_num_modes) / self.ego_num_modes ]
+                tvs_mode_dists = [[np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes)],
+                                  [np.stack([[np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
+                tvs_valid_pred = [False]
+            else:
+                img_tv = self.rasterizer.rasterize(agent_history, target_agent_id)
+                gmm_pred_tv = self.pred_model.predict_instance(img_tv, past_states_tv[:-1])
+                gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
+                gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(N_modes)
+
+                tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
+                tvs_mode_dists = [[gmm_pred_tv.mus[:, :N, :]], [gmm_pred_tv.sigmas[:, :N, :, :]]]
+                tvs_valid_pred = [True]
 
         return tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred
 
@@ -444,9 +454,7 @@ class RunIntersectionScenario:
         self.ego_N           = vehicle_params_list[self.ego_vehicle_idx].N
         self.ego_num_modes   = vehicle_params_list[self.ego_vehicle_idx].num_modes
 
-        if len(tv_vehicle_idxs) == 0:
-            raise RuntimeError("No target vehicles spawned")
-            # TODO: maybe this is okay?  Depends if we want to do no TV baselines with this too.
+        # Note: this can be empty, as checked in the _make_predictions code.
         self.tv_vehicle_idxs = tv_vehicle_idxs
 
     def _setup_predictions(self, prediction_params):
