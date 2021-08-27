@@ -14,6 +14,12 @@
 		"overlay_ego_info"   : true,
 		"overlay_mode_probs" : true
 	},
+	"ego_init_jsons" : [
+		"ego_init_01.json",
+		"ego_init_02.json",
+		"ego_init_03.json",
+		"ego_init_04.json"
+	],
 	"vehicle_params" : [
 		{
 			"role"                        : "static",

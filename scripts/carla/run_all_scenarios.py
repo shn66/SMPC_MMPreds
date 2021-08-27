@@ -80,10 +80,10 @@ if __name__ == '__main__':
 		scenario_dict = json.load(open(scenario, "r"))
 		scenario_name = scenario.split("/")[-1]
 
-		ego_init_list = glob.glob(scenario_folder + "ego_init_*_" + scenario_name)
+		ego_init_list = scenario["ego_init_jsons"]
 		for ego_init in ego_init_list:
 			# Load the ego vehicle parameters.
-			ego_init_dict = json.load(open(ego_init, "r"))
+			ego_init_dict = json.load(open(os.path.join(scenario_folder, ego_init), "r"))
 
 			# Run first without any target vehicles.
 			run_without_tvs(scenario_dict, ego_init_dict)
