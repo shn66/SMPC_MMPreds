@@ -25,14 +25,12 @@ def run_without_tvs(scenario_dict, ego_init_dict, savedir):
 		else:
 			raise ValueError(f"Invalid vehicle role: {vp_dict['role']}")
 
-	import pdb; pdb.set_trace()
-	# runner = RunIntersectionScenario(carla_params,
-	# 	                             drone_viz_params,
-	# 	                             vehicles_params_list,
-	# 	                             pred_params,
-	# 	                             savedir)
-	# runner.run_scenario()
-
+	runner = RunIntersectionScenario(carla_params,
+		                             drone_viz_params,
+		                             vehicles_params_list,
+		                             pred_params,
+		                             savedir)
+	runner.run_scenario()
 
 def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 	carla_params     = CarlaParams(**scenario_dict["carla_params"])
@@ -63,13 +61,12 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 		else:
 			raise ValueError(f"Invalid vehicle role: {vp_dict['role']}")
 
-	import pdb; pdb.set_trace()
-	# runner = RunIntersectionScenario(carla_params,
-	# 	                             drone_viz_params,
-	# 	                             vehicles_params_list,
-	# 	                             pred_params,
-	# 	                             savedir)
-	# runner.run_scenario()
+	runner = RunIntersectionScenario(carla_params,
+		                             drone_viz_params,
+		                             vehicles_params_list,
+		                             pred_params,
+		                             savedir)
+	runner.run_scenario()
 
 if __name__ == '__main__':
 	scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )

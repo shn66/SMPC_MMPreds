@@ -27,6 +27,7 @@ from policies.bl_smpc_agent import BLSMPCAgent
 from rasterizer.agent_history import AgentHistory
 from rasterizer.sem_box_rasterizer import SemBoxRasterizer
 from utils.frenet_trajectory_handler import fix_angle
+from utils.vehicle_geometry_utils import vehicle_name_to_lf_lr
 
 scriptdir = os.path.abspath(__file__).split('scripts')[0] + 'scripts/'
 sys.path.append(scriptdir)
@@ -127,7 +128,6 @@ def load_intersection(intersection_csv):
     return intersection
 
 def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
-    # TODO: fix the agent constructors for MPCAgents.
     if vehicle_params.policy_type == "static":
         return StaticAgent(vehicle_actor, goal_transform.location)
     elif vehicle_params.policy_type == "mpc":
@@ -271,9 +271,6 @@ class RunIntersectionScenario:
         self.box_rotation    = carla.Rotation()                              # TODO: remove + use ellipses
 
     def run_scenario(self):
-        # TODO: document this better.
-        # TODO: log the results and figure out where to save.
-
         # Return flag to indicate if this ran to completion.
         ran_successfully = False
 
@@ -287,10 +284,9 @@ class RunIntersectionScenario:
         results_dict = {}
         for ind_vehicle, vehicle in enumerate(self.vehicle_actors):
             key = f"{vehicle.attributes['role_name']}_{ind_vehicle}"
-            # TODO: check l_f + l_r.  Pass it to MPC?
-            # TODO: update this in the loop and save.
-            results_dict[key] = {"l_f"              : 1.5, # TODO
-                                 "l_r"              : 1.5,
+            l_f, l_r = vehicle_name_to_lf_lr(vehicle.type_id) # e.g. "vehicle.audi.tt"
+            results_dict[key] = {"l_f"              : l_f,
+                                 "l_r"              : l_r,
                                  "state_trajectory" : [],
                                  "input_trajectory" : [],
                                  "feasibility"      : [],
@@ -299,6 +295,15 @@ class RunIntersectionScenario:
         try:
             with CarlaSyncMode(self.world, self.drone, fps=self.carla_fps) as sync_mode:
                 # Run simulation a couple steps to allow the initial velocities to be processed.
+
+                # Set initial velocity for all vehicle agents.
+                for veh_actor, init_speed in zip(self.vehicle_actors, self.vehicle_init_speeds):
+                    yaw_carla = veh_actor.get_transform().rotation.yaw
+                    carla_vel = carla.Vector3D(x=init_speed*np.cos(np.radians(yaw_carla)) ,
+                                               y=init_speed*np.sin(np.radians(yaw_carla)) ,
+                                               z=0.)
+                    veh_actor.set_target_velocity(carla_vel)
+
                 for _ in range(2):
                     sync_mode.tick(timeout=self.timeout)
 
@@ -317,7 +322,7 @@ class RunIntersectionScenario:
                     completed = True
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
 
-                        control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict) # TODO: fill in, make gmm go in descending order
+                        control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict)
                         z0 = np.append(t_elapsed, z0) # add the Carla timestamp
                         act_key = f"{act.attributes['role_name']}_{idx_act}"
                         results_dict[act_key]["state_trajectory"].append(z0)
@@ -337,8 +342,8 @@ class RunIntersectionScenario:
                     # Get drone camera image.
                     img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)
                     img_drone = np.reshape(img_drone, (img.height, img.width, 4))
-                    img_drone = img_array[:, :, :3]
-                    img_drone = cv2.resize(img_array, (self.viz_params.img_width, self.viz_params.img_height), interpolation = cv2.INTER_AREA)
+                    img_drone = img_drone[:, :, :3]
+                    img_drone = cv2.resize(img_drone, (self.viz_params.img_width, self.viz_params.img_height), interpolation = cv2.INTER_AREA)
 
                     # Handle overlays on drone camera image.
                     if self.viz_params.overlay_ego_info:
@@ -347,7 +352,8 @@ class RunIntersectionScenario:
 
                     if self.viz_params.overlay_gmm:
                         if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
-                            zip_obj = zip( reversed((tvs_mode_dists[0][0])), reversed(self.mode_rgb_colors) ) # TODO: clean up tv_mode_dists form.
+                            # Note: we reverse mode_dists and colors s.t. least probable mode is plotted first.
+                            zip_obj = zip( reversed((tvs_mode_dists[0][0])), reversed(self.mode_rgb_colors) )
                             for mean_traj, color in zip_obj:
                                 for mean_pos in mean_traj:
                                     # TODO: make these ellipses instead.
@@ -362,7 +368,7 @@ class RunIntersectionScenario:
                         if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
                             cv2.putText(img_drone, "Mode probabilities: ", (50,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                             for prob_idx, mode_prob in enumerate(tvs_mode_probs[0]):
-                                cv2.putText(img_array, f"{mode_prob:.3f}",
+                                cv2.putText(img_drone, f"{mode_prob:.3f}",
                                             (360 + prob_idx * 100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, self.mode_rgb_colors[prob_idx], 2)
 
                     # Handle visualization / saving to video.
@@ -387,7 +393,7 @@ class RunIntersectionScenario:
         finally:
             if writer:
                 writer.release()
-            for actor in self.vehicle_list:
+            for actor in self.vehicle_actors:
                 actor.destroy()
             self.drone.destroy()
             cv2.destroyAllWindows()
@@ -420,13 +426,13 @@ class RunIntersectionScenario:
                                   [np.stack([[np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
                 tvs_valid_pred = [False]
             else:
-                img_tv = self.rasterizer.rasterize(agent_history, target_agent_id)
+                img_tv = self.rasterizer.rasterize(self.agent_history, target_agent_id)
                 gmm_pred_tv = self.pred_model.predict_instance(img_tv, past_states_tv[:-1])
                 gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
-                gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(N_modes)
+                gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(self.ego_num_modes)
 
                 tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
-                tvs_mode_dists = [[gmm_pred_tv.mus[:, :N, :]], [gmm_pred_tv.sigmas[:, :N, :, :]]]
+                tvs_mode_dists = [[gmm_pred_tv.mus[:, :self.ego_N, :]], [gmm_pred_tv.sigmas[:, :self.ego_N, :, :]]]
                 tvs_valid_pred = [True]
 
         return tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred
@@ -458,16 +464,19 @@ class RunIntersectionScenario:
         self.drone = self.world.spawn_actor(bp_drone, cam_transform)
 
     def _setup_vehicles(self, vehicle_params_list, carla_params):
-        intersection = load_intersection(carla_params.intersection_csv_loc)
+        intersection_fname = os.path.join( os.path.dirname(os.path.abspath(__file__)),
+                                           carla_params.intersection_csv_loc )
+        intersection = load_intersection(intersection_fname)
         bp_library = self.world.get_blueprint_library()
 
         self.vehicle_actors = []
         self.vehicle_policies = []
+        self.vehicle_init_speeds = []
         ego_vehicle_idxs  = []
         tv_vehicle_idxs   = []
 
         for idx, vp in enumerate(vehicle_params_list):
-            veh_bp = bp_library.filter(vp.vehicle_type)
+            veh_bp = bp_library.find(vp.vehicle_type)
             veh_bp.set_attribute("color", vp.vehicle_color)
             veh_bp.set_attribute("role_name", vp.role)
 
@@ -486,19 +495,13 @@ class RunIntersectionScenario:
             veh_actor  = self.world.spawn_actor(veh_bp, start_transform)
             veh_policy = get_vehicle_policy(vp, veh_actor, goal_transform)
 
-            # Set initial velocity.
-            yaw_carla = veh_actor.get_transform().rotation.yaw
-            carla_vel = carla.Vector3D(x=vp.init_speed*np.cos(np.radians(yaw_carla)) ,
-                                       y=vp.init_speed*np.sin(np.radians(yaw_carla)) ,
-                                       z=0.)
-            veh_actor.set_target_velocity(carla_vel)
-
             self.vehicle_actors.append(veh_actor)
             self.vehicle_policies.append(veh_policy)
+            self.vehicle_init_speeds.append(vp.init_speed)
 
         if len(ego_vehicle_idxs) != 1:
             raise RuntimeError(f"Invalid number of ego vehicles spawned: {len(ego_vehicle_idxs)}")
-        self.ego_vehicle_idx = ego_vehicle_idx[0]
+        self.ego_vehicle_idx = ego_vehicle_idxs[0]
         self.ego_N           = vehicle_params_list[self.ego_vehicle_idx].N
         self.ego_num_modes   = vehicle_params_list[self.ego_vehicle_idx].num_modes
 
@@ -507,11 +510,11 @@ class RunIntersectionScenario:
 
     def _setup_predictions(self, prediction_params):
         self.agent_history = AgentHistory(self.world.get_actors())
-        self.rasterizer    = SemBoxRasterizer(world.get_map().get_topology(), render_traffic_lights=\
+        self.rasterizer    = SemBoxRasterizer(self.world.get_map().get_topology(), render_traffic_lights=\
                                                  prediction_params.render_traffic_lights)
-        prefix             = os.path.abspath(__file__).split('scripts')[0] + 'models/'
+        prefix             = os.path.abspath(__file__).split('carla')[0] + 'models/'
         self.pred_model    = DeployMultiPath(prefix+prediction_params.model_weights, \
-                                             prefix+prediction_params.model_anchors)
+                                             np.load(prefix+prediction_params.model_anchors))
 
         # Try to do a sample prediction, initialize and check GPU model is working fine.
         blank_image = np.zeros((self.rasterizer.sem_rast.raster_height,
