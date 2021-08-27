@@ -8,6 +8,7 @@ import sys
 import cv2
 import numpy as np
 import random
+import pickle
 
 CARLA_ROOT = os.getenv("CARLA_ROOT")
 if CARLA_ROOT is None:
