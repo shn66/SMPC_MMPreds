@@ -134,17 +134,20 @@ def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
         return MPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
-                        num_modes=vehicle_params.num_modes)
+                        N_modes=vehicle_params.num_modes,
+                        nominal_speed_mps=vehicle_params.nominal_speed)
     elif vehicle_params.policy_type == "blsmpc":
         return BLSMPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
-                        num_modes=vehicle_params.num_modes)
+                        N_modes=vehicle_params.num_modes,
+                        nominal_speed_mps=vehicle_params.nominal_speed)
     elif vehicle_params.policy_type == "smpc":
         return SMPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
-                        num_modes=vehicle_params.num_modes,
+                        N_modes=vehicle_params.num_modes,
+                        nominal_speed_mps=vehicle_params.nominal_speed,
                         smpc_config=vehicle_params.smpc_config)
     else:
         raise ValueError(f"Unsupported policy type: {vehicle_params.policy_type}")
@@ -286,11 +289,11 @@ class RunIntersectionScenario:
                     # Handle predictions.
                     self.agent_history.update(snap, self.world)
                     tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred = self._make_predictions()
-
+                    pred_dict={ "tvs_positions": tvs_positions, "tvs_mode_dists": tvs_mode_dists}
                     # Run policies for each agent.
                     completed = True
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
-                        control, z0, u0 = policy.run_step() # to fill in
+                        control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict) # TODO: fill in, make gmm go in descending order
                         completed = completed and policy.done()
                         act.apply_control(control)
 
@@ -320,6 +323,7 @@ class RunIntersectionScenario:
                                     loc = carla.Location(x= float(mean_pos[0]),
                                                          y=-float(mean_pos[1]),
                                                          z= float(0.2))
+                                    # TODO: adjust to circumscribing boxes.
                                     carla_box = carla.BoundingBox(loc, self.mean_box_extent)
                                     self.world.debug.draw_box(carla_box, self.box_rotation, color=carla.Color(*color), life_time= 1.0/float(self.carla_fps) )
 

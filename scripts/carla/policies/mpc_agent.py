@@ -22,7 +22,13 @@ import matplotlib.pyplot as plt
 class MPCAgent(object):
     """ A path following agent with collision avoidance constraints over a short horizon. """
 
-    def __init__(self, vehicle, goal_location):
+    def __init__(self,
+                 vehicle,
+                 goal_location,
+                 nominal_speed_mps =8.0, # sets desired speed (m/s) for tracking path
+                 dt =0.2,
+                 N=8,                   # time discretization (s) used to generate a reference
+                 N_modes = 3):
         self.vehicle = vehicle
         self.world   = vehicle.get_world()
         carla_map     = self.world.get_map()
@@ -39,10 +45,10 @@ class MPCAgent(object):
         self._frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
 
         # TODO: remove hard-coded values.
-        self.nominal_speed = 9.0 # m/s
+        self.nominal_speed = nominal_speed_mps # m/s
         self.lat_accel_max = 3.0  # m/s^2
-        np.random.seed(2021)
-        self._setup_mpc()
+
+        self._setup_mpc(N=N, DT=dt)
 
         self._fit_velocity_profile()
 
@@ -61,7 +67,7 @@ class MPCAgent(object):
     def done(self):
         return self.goal_reached
 
-    def run_step(self):
+    def run_step(self, pred_dict):
         vehicle_loc   = self.vehicle.get_location()
         vehicle_tf    = self.vehicle.get_transform()
         vehicle_vel   = self.vehicle.get_velocity()
@@ -146,7 +152,7 @@ class MPCAgent(object):
 
         # self.counter += 1
 
-        return control, state_prev, control_prev
+        return control, state_prev, control_prev, sol_dict['optimal'], sol_dict['solve_time']
 
     ################################################################################################
     ########################## Helper / Update Functions ###########################################

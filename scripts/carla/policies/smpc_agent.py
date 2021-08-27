@@ -200,13 +200,16 @@ class SMPCAgent(object):
 	def done(self):
 		return self.goal_reached
 
-	def run_step(self, target_vehicle_positions, target_vehicle_gmm_preds):
+	def run_step(self, pred_dict):
 		vehicle_loc   = self.vehicle.get_location()
 		vehicle_wp    = self.map.get_waypoint(vehicle_loc)
 		vehicle_tf    = self.vehicle.get_transform()
 		vehicle_vel   = self.vehicle.get_velocity()
 		vehicle_accel = self.vehicle.get_acceleration()
 		speed_limit   = self.vehicle.get_speed_limit()
+
+		target_vehicle_positions=pred_dict["tvs_positions"]
+		target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
 		# Get the vehicle's current pose in a RH coordinate system.
 		x, y = vehicle_loc.x, -vehicle_loc.y
@@ -287,4 +290,4 @@ class SMPCAgent(object):
                                                      sol_dict['v_next'], # v_des
                                                      sol_dict['u_control'][1]+update_dict['df_ref'][0]) # df_des
 
-		return control, self.state_prev, self.control_prev
+		return control, self.state_prev, self.control_prev, sol_dict['optimal'], sol_dict['solve_time']
