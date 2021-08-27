@@ -121,5 +121,4 @@ class ScenarioResult:
 		metric_dict["average_solve_time"]       = get_average_solve_time(self.ego_closed_loop_trajectory)
 		metric_dict["dmins_per_TV"]             = get_min_dist_per_TV(self.ego_closed_loop_trajectory, \
 			                                                          self.tv_closed_loop_trajectories)
-
 		return metric_dict

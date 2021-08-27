@@ -134,17 +134,20 @@ def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
         return MPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
-                        num_modes=vehicle_params.num_modes)
+                        N_modes=vehicle_params.num_modes,
+                        nominal_speed_mps=vehicle_params.nominal_speed)
     elif vehicle_params.policy_type == "smpc_bl":
         return BLSMPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
-                        num_modes=vehicle_params.num_modes)
+                        N_modes=vehicle_params.num_modes,
+                        nominal_speed_mps=vehicle_params.nominal_speed)
     elif vehicle_params.policy_type == "smpc":
         return SMPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
-                        num_modes=vehicle_params.num_modes,
+                        N_modes=vehicle_params.num_modes,
+                        nominal_speed_mps=vehicle_params.nominal_speed,
                         smpc_config=vehicle_params.smpc_config)
     else:
         raise ValueError(f"Unsupported policy type: {vehicle_params.policy_type}")
@@ -286,11 +289,11 @@ class RunIntersectionScenario:
                     # Handle predictions.
                     self.agent_history.update(snap, self.world)
                     tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred = self._make_predictions()
-
+                    pred_dict={ "tvs_positions": tvs_positions, "tvs_mode_dists": tvs_mode_dists}
                     # Run policies for each agent.
                     completed = True
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
-                        control, z0, u0 = policy.run_step() # to fill in
+                        control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict) # TODO: fill in, make gmm go in descending order
                         completed = completed and policy.done()
                         act.apply_control(control)
 
@@ -320,6 +323,7 @@ class RunIntersectionScenario:
                                     loc = carla.Location(x= float(mean_pos[0]),
                                                          y=-float(mean_pos[1]),
                                                          z= float(0.2))
+                                    # TODO: adjust to circumscribing boxes.
                                     carla_box = carla.BoundingBox(loc, self.mean_box_extent)
                                     self.world.debug.draw_box(carla_box, self.box_rotation, color=carla.Color(*color), life_time= 1.0/float(self.carla_fps) )
 
@@ -365,10 +369,10 @@ class RunIntersectionScenario:
             img_tv = self.rasterizer.rasterize(agent_history, target_agent_id)
             gmm_pred_tv = self.pred_model.predict_instance(img_tv, past_states_tv[:-1])
             gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
-            gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(N_modes)
+            gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(self.ego_num_modes)
 
             tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
-            tvs_mode_dists = [[gmm_pred_tv.mus[:, :N, :]], [gmm_pred_tv.sigmas[:, :N, :, :]]]
+            tvs_mode_dists = [[gmm_pred_tv.mus[:, :self.ego_N, :]], [gmm_pred_tv.sigmas[:, :self.ego_N, :, :]]]
             tvs_valid_pred = [True]
 
         return tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred
@@ -446,7 +450,7 @@ class RunIntersectionScenario:
 
         if len(tv_vehicle_idxs) == 0:
             raise RuntimeError("No target vehicles spawned")
-            # TODO: maybe this is okay?  Depends if we want to do no TV baselines with this too.
+            # TODO: spoof predictions for SMPC if there are no TVs.
         self.tv_vehicle_idxs = tv_vehicle_idxs
 
     def _setup_predictions(self, prediction_params):

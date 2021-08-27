@@ -22,7 +22,7 @@ class StaticAgent(object):
     def done(self):
         return True
 
-    def run_step(self):
+    def run_step(self, **kwargs):
         vehicle_tf    = self.vehicle.get_transform()
         vehicle_vel   = self.vehicle.get_velocity()
 

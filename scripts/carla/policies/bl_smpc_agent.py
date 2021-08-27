@@ -22,7 +22,13 @@ import matplotlib.pyplot as plt
 class BLSMPCAgent(object):
     """ A path following agent with collision avoidance constraints over a short horizon. """
 
-    def __init__(self, vehicle, goal_location):
+    def __init__(self,
+                 vehicle,
+                 goal_location,
+                 nominal_speed_mps =8.0, # sets desired speed (m/s) for tracking path
+                 dt =0.2,
+                 N=8,                   # time discretization (s) used to generate a reference
+                 N_modes = 3):
         self.vehicle = vehicle
         self.world   = vehicle.get_world()
         carla_map     = self.world.get_map()
@@ -39,10 +45,10 @@ class BLSMPCAgent(object):
         self._frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
 
         # TODO: remove hard-coded values.
-        self.nominal_speed = 8.0 # m/s
+        self.nominal_speed = nominal_speed_mps # m/s
         self.lat_accel_max = 3.0  # m/s^2
 
-        self._setup_mpc()
+        self._setup_mpc(N=N, DT=dt, N_modes=N_modes)
 
         self._fit_velocity_profile()
 
@@ -61,12 +67,15 @@ class BLSMPCAgent(object):
     def done(self):
         return self.goal_reached
 
-    def run_step(self, target_vehicle_positions, target_vehicle_gmm_preds):
+    def run_step(self, pred_dict):
         vehicle_loc   = self.vehicle.get_location()
         vehicle_tf    = self.vehicle.get_transform()
         vehicle_vel   = self.vehicle.get_velocity()
         vehicle_accel = self.vehicle.get_acceleration()
         speed_limit   = self.nominal_speed #self.vehicle.get_speed_limit()
+
+        target_vehicle_positions=pred_dict["tvs_positions"]
+        target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y
@@ -148,7 +157,8 @@ class BLSMPCAgent(object):
 
         # self.counter += 1
 
-        return control, state_prev, control_prev
+        return control, state_prev, control_prev, sol_dict['optimal'], sol_dict['solve_time']
+
 
     ################################################################################################
     ########################## Helper / Update Functions ###########################################
@@ -266,7 +276,7 @@ class BLSMPCAgent(object):
                    N_PRED_TV  =   10,   # timesteps for target vehicle prediction
                    N_modes    =    2,   # modes for target vehicle prediction
                    NUM_TVS    =    1,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  9.0,  # square of minimum 2-norm distance to a target vehicle
+                   D_MIN_SQ   =  16.0,  # square of minimum 2-norm distance to a target vehicle
                    RISK       =  0.1,
                    L_F        =  1.7213,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.4987,   # distance from CoG to rear axle (m) [guesstimate]
