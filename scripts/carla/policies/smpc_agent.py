@@ -54,9 +54,11 @@ class SMPCAgent(object):
 		elif smpc_config=="open_loop":
 			self.ol_flag=True
 			self.ns_bl_flag=False
-		else:
+		elif smpc_config=="no_switch":
 			self.ol_flag=False
 			self.ns_bl_flag=True
+		else:
+			raise ValueError(f"Invalid SMPC config: {smpc_config}")
 
 		# Get the high-level route using Carla's API (basically A* search over road segments).
 		# init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))

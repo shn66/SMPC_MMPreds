@@ -286,10 +286,10 @@ class RunIntersectionScenario:
         # Data Logging Setup
         results_dict = {}
         for ind_vehicle, vehicle in enumerate(self.vehicle_actors):
-            key = f"{vehicle.attributes["role_name"]}_{ind_vehicle}"
+            key = f"{vehicle.attributes['role_name']}_{ind_vehicle}"
             # TODO: check l_f + l_r.  Pass it to MPC?
             # TODO: update this in the loop and save.
-            results_dict[key] = {"l_f"              : 1.5,
+            results_dict[key] = {"l_f"              : 1.5, # TODO
                                  "l_r"              : 1.5,
                                  "state_trajectory" : [],
                                  "input_trajectory" : [],
@@ -311,10 +311,20 @@ class RunIntersectionScenario:
                     self.agent_history.update(snap, self.world)
                     tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred = self._make_predictions()
                     pred_dict={ "tvs_positions": tvs_positions, "tvs_mode_dists": tvs_mode_dists}
+
                     # Run policies for each agent.
+                    t_elapsed = snap.elapsed_seconds
                     completed = True
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
+
                         control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict) # TODO: fill in, make gmm go in descending order
+                        z0 = np.append(t_elapsed, z0) # add the Carla timestamp
+                        act_key = f"{act.attributes['role_name']}_{idx_act}"
+                        results_dict[act_key]["state_trajectory"].append(z0)
+                        results_dict[act_key]["input_trajectory"].append(u0)
+                        results_dict[act_key]["feasibility"].append(is_feasible)
+                        results_dict[act_key]["solve_times"].append(solve_time)
+
                         completed = completed and policy.done()
                         act.apply_control(control)
 
@@ -363,8 +373,14 @@ class RunIntersectionScenario:
                         writer.write(img_drone)
 
                 # Save results and mark successful completion.
-                pickle.dump(fname, dict)
-
+                for act_key in results_dict:
+                    for arr_key in ["state_trajectory",
+                                    "input_trajectory",
+                                    "feasibility",
+                                    "solve_times"]:
+                        results_dict[act_key][arr_key] = np.array(results_dict[act_key][arr_key])
+                pkl_name = os.path.join(self.savedir, "scenario_result.pkl")
+                pickle.dump(results_dict, open(pkl_name, "wb"))
                 ran_successfully = True
 
         # Teardown.

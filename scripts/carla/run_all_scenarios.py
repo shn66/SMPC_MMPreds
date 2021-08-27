@@ -5,7 +5,7 @@ import pdb
 
 from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
 
-def run_without_tvs(scenario_dict, ego_init_dict):
+def run_without_tvs(scenario_dict, ego_init_dict, savedir):
 	carla_params     = CarlaParams(**scenario_dict["carla_params"])
 	drone_viz_params = DroneVizParams(**scenario_dict["drone_viz_params"])
 	pred_params      = PredictionParams()
@@ -30,11 +30,11 @@ def run_without_tvs(scenario_dict, ego_init_dict):
 	# 	                             drone_viz_params,
 	# 	                             vehicles_params_list,
 	# 	                             pred_params,
-	# 	                             "") # TODO
+	# 	                             savedir)
 	# runner.run_scenario()
 
 
-def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config):
+def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 	carla_params     = CarlaParams(**scenario_dict["carla_params"])
 	drone_viz_params = DroneVizParams(**scenario_dict["drone_viz_params"])
 	pred_params      = PredictionParams()
@@ -68,26 +68,32 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config):
 	# 	                             drone_viz_params,
 	# 	                             vehicles_params_list,
 	# 	                             pred_params,
-	# 	                             "") # TODO
+	# 	                             savedir)
 	# runner.run_scenario()
 
 if __name__ == '__main__':
 	scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
 	scenarios_list = glob.glob(scenario_folder + "scenario_*.json")
 
+	results_folder = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results" )
+
 	for scenario in scenarios_list:
 		# Load the scenario and generate parameters.
 		scenario_dict = json.load(open(scenario, "r"))
-		scenario_name = scenario.split("/")[-1]
+		scenario_name = scenario.split("/")[-1].split('.json')[0]
 
-		ego_init_list = scenario["ego_init_jsons"]
+		ego_init_list = scenario_dict["ego_init_jsons"]
 		for ego_init in ego_init_list:
 			# Load the ego vehicle parameters.
 			ego_init_dict = json.load(open(os.path.join(scenario_folder, ego_init), "r"))
+			ego_init_name = ego_init.split(".json")[0]
 
 			# Run first without any target vehicles.
-			run_without_tvs(scenario_dict, ego_init_dict)
+			savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv")
+			run_without_tvs(scenario_dict, ego_init_dict, savedir)
 
 			# Run all ego policy options with target vehicles.
 			for ego_policy_config in ["blsmpc", "smpc_full", "smpc_open_loop", "smpc_no_switch"]:
-				run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config)
+				savedir = os.path.join( results_folder,
+					                    f"{scenario_name}_{ego_init_name}_{ego_policy_config}")
+				run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir)

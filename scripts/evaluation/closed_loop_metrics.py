@@ -75,8 +75,7 @@ def feasibility_percent(cl_traj : ClosedLoopTrajectory) -> float:
 	return np.sum(feasible_bool) / len(feasible_bool)
 
 def get_average_solve_time(cl_traj : ClosedLoopTrajectory) -> float:
-	# TODO: what is the solve time if the problem wasn't feasible?
-	return np.mean( cl_traj.solve_times )
+	return np.nanmean( cl_traj.solve_times ) # ignore infeasible cases
 
 def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
 	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
