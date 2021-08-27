@@ -49,18 +49,13 @@ class BLSMPCAgent(object):
         self.nominal_speed = nominal_speed_mps # m/s
         self.lat_accel_max = 3.0  # m/s^2
         self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
-        self._setup_mpc(N=N, dt=dt, N_modes=N_modes, L_F=self.lf, L_R=self.lr)
+        self._setup_mpc(N=N, DT=dt, N_modes=N_modes, L_F=self.lf, L_R=self.lr)
 
         self._fit_velocity_profile()
 
         self._low_level_control = LowLevelControl(vehicle)
 
-        self.stop_control = carla.VehicleControl()
-        self.stop_control.hand_brake = False
-        self.stop_control.manual_gear_shift = False
-        self.stop_control.throttle = 0.
-        self.stop_control.brake    = -1.
-        self.stop_control.steer    = 0.
+
 
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
         self.counter = 0
@@ -91,47 +86,58 @@ class BLSMPCAgent(object):
             self._frenet_traj.convert_global_to_frenet_frame(x, y, psi)
         curv = self._frenet_traj.get_curvature_at_s(s)
 
+        z0=np.array([x,y,psi,speed])
+        u0=np.array([self.A_MIN, 0.])
+        v_des = np.clip(z0[-1] + self.A_MIN * self.DT, self.V_MIN, self.V_MAX)
+        is_opt=False
+        solve_time=np.nan
+
         if self.goal_reached or self._frenet_traj.reached_trajectory_end(s, resolution=5.):
             # Stop if the end of the path is reached and signal completion.
             self.goal_reached = True
-            return self.stop_control
 
-        # Update MPC problem.
-        update_dict = {'x0'      : x,
-                       'y0'      : y,
-                       'psi0'    : psi,
-                       'v0'      : speed}
-
-
-        update_dict.update( self._get_reference_traj(**update_dict) )
-        update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1] })
-        # update_dict['tv_refs']  = self._get_target_vehicles(x, y)
-
-        if self.warm_start:
-            update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
-            update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
-            update_dict['warm_start'] = self.warm_start
         else:
-            update_dict['acc_prev']  = 0.
-            update_dict['df_prev']   = 0.
 
-        self._update(update_dict)
+            # Update MPC problem.
+            update_dict = {'x0'      : x,
+                           'y0'      : y,
+                           'psi0'    : psi,
+                           'v0'      : speed}
 
-        # Solve MPC problem.
-        sol_dict = self._solve()
-        if sol_dict['optimal']:
-            self.warm_start = {}
-            self.warm_start['z_ws']       = sol_dict['z_mpc']
-            self.warm_start['u_ws']       = sol_dict['u_mpc']
-            self.warm_start['sl_ws']      = sol_dict['sl_mpc']
 
-        state_prev=np.array([x,y,psi,speed])
-        control_prev=sol_dict['u_mpc'][0,:]
+            update_dict.update( self._get_reference_traj(**update_dict) )
+            update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1] })
+            # update_dict['tv_refs']  = self._get_target_vehicles(x, y)
+
+            if self.warm_start:
+                update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
+                update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
+                update_dict['warm_start'] = self.warm_start
+            else:
+                update_dict['acc_prev']  = 0.
+                update_dict['df_prev']   = 0.
+
+            self._update(update_dict)
+
+            # Solve MPC problem.
+            sol_dict = self._solve()
+            if sol_dict['optimal']:
+                self.warm_start = {}
+                self.warm_start['z_ws']       = sol_dict['z_mpc']
+                self.warm_start['u_ws']       = sol_dict['u_mpc']
+                self.warm_start['sl_ws']      = sol_dict['sl_mpc']
+
+
+            u0=sol_dict['u_mpc'][0,:]
+            is_opt     = sol_dict['optimal']
+            solve_time = sol_dict['solve_time']
+            v_des = sol_dict['z_mpc'][1,3]
+
         # Get low level control.
-        control =  self._low_level_control.update(update_dict['v0'],      # v_curr
-                                                  sol_dict['u_mpc'][0,0], # a_des
-                                                  sol_dict['z_mpc'][1,3], # v_des
-                                                  sol_dict['u_mpc'][0,1]) # df_des
+        control =  self._low_level_control.update(speed,      # v_curr
+                                                  u0[0], # a_des
+                                                  v_des, # v_des
+                                                  u0[1]) # df_des
 
         # if self.counter % 10 == 0:
         #     plt.subplot(311)
@@ -145,12 +151,12 @@ class BLSMPCAgent(object):
         #     plt.xlabel('y'); plt.ylabel('x')
 
         #     plt.subplot(312)
-        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 2], 'kx')
-        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 2], 'r')
+        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 2], 'kx')
+        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 2], 'r')
 
         #     plt.subplot(313)
-        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 3], 'kx')
-        #     plt.plot(np.array([x*self.dt for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 3], 'r')
+        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 3], 'kx')
+        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 3], 'r')
 
         #     plt.suptitle(f"ACC:{sol_dict['u_mpc'][0,0]}, V:{sol_dict['z_mpc'][1,3]}, ST:{sol_dict['u_mpc'][0,1]}")
 
@@ -158,7 +164,7 @@ class BLSMPCAgent(object):
 
         # self.counter += 1
 
-        return control, state_prev, control_prev, sol_dict['optimal'], sol_dict['solve_time']
+        return control, z0, u0, is_opt, solve_time
 
 
     ################################################################################################
@@ -178,7 +184,7 @@ class BLSMPCAgent(object):
             t_fits.append( (sn - s) / v_curr + t_fits[-1] )
 
         # Interpolate the points at time discretization dt.
-        t_disc    = np.arange(t_fits[0], t_fits[-1] + self.dt/2, self.dt)
+        t_disc    = np.arange(t_fits[0], t_fits[-1] + self.DT/2, self.DT)
         s_disc    = np.interp(t_disc, t_fits, traj[:,0])
         x_disc    = np.interp(t_disc, t_fits, traj[:,1])
         y_disc    = np.interp(t_disc, t_fits, traj[:,2])
@@ -195,7 +201,7 @@ class BLSMPCAgent(object):
 
         closest_idx = np.argmin( np.linalg.norm(self.reference[:, 1:3] - np.array([x0, y0]), axis=-1) )
 
-        t_ref = self.reference[closest_idx, 0] + np.array([x*self.dt for x in range(1, self.N+1)])
+        t_ref = self.reference[closest_idx, 0] + np.array([x*self.DT for x in range(1, self.N+1)])
 
         ref_dict['x_ref']   = np.interp(t_ref, self.reference[:, 0], self.reference[:, 1])
         ref_dict['y_ref']   = np.interp(t_ref, self.reference[:, 0], self.reference[:, 2])
@@ -245,9 +251,9 @@ class BLSMPCAgent(object):
     #         y_preds = []
 
     #         for _ in range(self.N_PRED_TV):
-    #             act_xn = act_x   + act_v * np.cos(act_psi) * self.dt
-    #             act_yn = act_y   + act_v * np.sin(act_psi) * self.dt
-    #             act_pn = act_psi + act_w * self.dt
+    #             act_xn = act_x   + act_v * np.cos(act_psi) * self.DT
+    #             act_yn = act_y   + act_v * np.sin(act_psi) * self.DT
+    #             act_pn = act_psi + act_w * self.DT
 
     #             x_preds.append(act_xn)
     #             y_preds.append(act_yn)
@@ -273,7 +279,7 @@ class BLSMPCAgent(object):
     ################################################################################################
     def _setup_mpc(self,
                    N          =   10,   # timesteps in MPC Horizon
-                   dt         =  0.2,   # discretization time between timesteps (s)
+                   DT         =  0.2,   # discretization time between timesteps (s)
                    N_PRED_TV  =   10,   # timesteps for target vehicle prediction
                    N_modes    =    2,   # modes for target vehicle prediction
                    NUM_TVS    =    1,   # maximum number of target vehicles to avoid
@@ -347,7 +353,7 @@ class BLSMPCAgent(object):
 
         self._update_initial_condition(0., 0., 0., 1.)
 
-        self._update_reference([self.dt * (x+1) for x in range(self.N)],
+        self._update_reference([self.DT * (x+1) for x in range(self.N)],
                                self.N*[0.],
                                self.N*[0.],
                                self.N*[1.])
@@ -377,31 +383,31 @@ class BLSMPCAgent(object):
         # State Dynamics Constraints
         for i in range(self.N):
             beta = casadi.atan( self.L_R / (self.L_F + self.L_R) * casadi.tan(self.df_dv[i]) )
-            self.opti.subject_to( self.x_dv[i+1]   == self.x_dv[i]   + self.dt * (self.v_dv[i] * casadi.cos(self.psi_dv[i] + beta)) )
-            self.opti.subject_to( self.y_dv[i+1]   == self.y_dv[i]   + self.dt * (self.v_dv[i] * casadi.sin(self.psi_dv[i] + beta)) )
-            self.opti.subject_to( self.psi_dv[i+1] == self.psi_dv[i] + self.dt * (self.v_dv[i] / self.L_R * casadi.sin(beta)) )
-            self.opti.subject_to( self.v_dv[i+1]   == self.v_dv[i]   + self.dt * (self.acc_dv[i]) )
+            self.opti.subject_to( self.x_dv[i+1]   == self.x_dv[i]   + self.DT * (self.v_dv[i] * casadi.cos(self.psi_dv[i] + beta)) )
+            self.opti.subject_to( self.y_dv[i+1]   == self.y_dv[i]   + self.DT * (self.v_dv[i] * casadi.sin(self.psi_dv[i] + beta)) )
+            self.opti.subject_to( self.psi_dv[i+1] == self.psi_dv[i] + self.DT * (self.v_dv[i] / self.L_R * casadi.sin(beta)) )
+            self.opti.subject_to( self.v_dv[i+1]   == self.v_dv[i]   + self.DT * (self.acc_dv[i]) )
 
         # Input Bound Constraints
         self.opti.subject_to( self.opti.bounded(self.A_MIN,  self.acc_dv, self.A_MAX) )
         self.opti.subject_to( self.opti.bounded(self.DF_MIN, self.df_dv,  self.DF_MAX) )
 
         # Input Rate Bound Constraints
-        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.dt -  self.sl_acc_dv[0],
+        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT -  self.sl_acc_dv[0],
                                                  self.acc_dv[0] - self.u_prev[0],
-                                                 self.A_DOT_MAX*self.dt   + self.sl_acc_dv[0]) )
+                                                 self.A_DOT_MAX*self.DT   + self.sl_acc_dv[0]) )
 
-        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.dt  -  self.sl_df_dv[0],
+        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.DT  -  self.sl_df_dv[0],
                                                  self.df_dv[0] - self.u_prev[1],
-                                                 self.DF_DOT_MAX*self.dt  + self.sl_df_dv[0]) )
+                                                 self.DF_DOT_MAX*self.DT  + self.sl_df_dv[0]) )
 
         for i in range(self.N - 1):
-            self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.dt   -  self.sl_acc_dv[i+1],
+            self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT   -  self.sl_acc_dv[i+1],
                                                      self.acc_dv[i+1] - self.acc_dv[i],
-                                                     self.A_DOT_MAX*self.dt   + self.sl_acc_dv[i+1]) )
-            self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.dt  -  self.sl_df_dv[i+1],
+                                                     self.A_DOT_MAX*self.DT   + self.sl_acc_dv[i+1]) )
+            self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.DT  -  self.sl_df_dv[i+1],
                                                      self.df_dv[i+1]  - self.df_dv[i],
-                                                     self.DF_DOT_MAX*self.dt  + self.sl_df_dv[i+1]) )
+                                                     self.DF_DOT_MAX*self.DT  + self.sl_df_dv[i+1]) )
         # Slack Constraints
         self.opti.subject_to( 0 <= self.sl_df_dv )
         self.opti.subject_to( 0 <= self.sl_acc_dv )

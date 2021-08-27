@@ -56,14 +56,6 @@ class MPCAgent(object):
         self._fit_velocity_profile()
 
         self._low_level_control = LowLevelControl(vehicle)
-
-        self.stop_control = carla.VehicleControl()
-        self.stop_control.hand_brake = False
-        self.stop_control.manual_gear_shift = False
-        self.stop_control.throttle = 0.
-        self.stop_control.brake    = -1.
-        self.stop_control.steer    = 0.
-
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
         self.counter = 0
 
@@ -90,45 +82,53 @@ class MPCAgent(object):
             self._frenet_traj.convert_global_to_frenet_frame(x, y, psi)
         curv = self._frenet_traj.get_curvature_at_s(s)
 
+        # Initialize variables to be returned.
+        z0=np.array([x,y,psi,speed])
+        u0=np.array([self.A_MIN, 0.])
+        v_des = np.clip(z0[-1] + self.A_MIN * self.DT, self.V_MIN, self.V_MAX)
+        is_opt=False
+        solve_time=np.nan
+
         if self.goal_reached or self._frenet_traj.reached_trajectory_end(s, resolution=5.):
             # Stop if the end of the path is reached and signal completion.
             self.goal_reached = True
-            return self.stop_control
-
-        # Update MPC problem.
-        update_dict = {'x0'      : x,
-                       'y0'      : y,
-                       'psi0'    : psi,
-                       'v0'      : speed}
-        update_dict.update( self._get_reference_traj(**update_dict) )
-        update_dict['tv_refs']  = self._get_target_vehicles(x, y)
-
-        if self.warm_start:
-            update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
-            update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
-            update_dict['warm_start'] = self.warm_start
         else:
-            update_dict['acc_prev']  = 0.
-            update_dict['df_prev']   = 0.
+            # Update MPC problem.
+            update_dict = {'x0'      : x,
+                           'y0'      : y,
+                           'psi0'    : psi,
+                           'v0'      : speed}
+            update_dict.update( self._get_reference_traj(**update_dict) )
+            update_dict['tv_refs']  = self._get_target_vehicles(x, y)
 
-        self._update(update_dict)
+            if self.warm_start:
+                update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
+                update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
+                update_dict['warm_start'] = self.warm_start
+            else:
+                update_dict['acc_prev']  = 0.
+                update_dict['df_prev']   = 0.
 
-        # Solve MPC problem.
-        sol_dict = self._solve()
-        if sol_dict['optimal']:
-            self.warm_start = {}
-            self.warm_start['z_ws']       = sol_dict['z_mpc']
-            self.warm_start['u_ws']       = sol_dict['u_mpc']
-            self.warm_start['sl_ws']      = sol_dict['sl_mpc']
+            self._update(update_dict)
 
-        state_prev=np.array([x,y,psi,speed])
-        control_prev=sol_dict['u_mpc'][0,:]
+            # Solve MPC problem.
+            sol_dict = self._solve()
+            if sol_dict['optimal']:
+                self.warm_start = {}
+                self.warm_start['z_ws']       = sol_dict['z_mpc']
+                self.warm_start['u_ws']       = sol_dict['u_mpc']
+                self.warm_start['sl_ws']      = sol_dict['sl_mpc']
+
+            u0=sol_dict['u_mpc'][0,:]
+            is_opt     = sol_dict['optimal']
+            solve_time = sol_dict['solve_time']
+            v_des = sol_dict['z_mpc'][1,3]
 
         # Get low level control.
-        control =  self._low_level_control.update(update_dict['v0'],      # v_curr
-                                                  sol_dict['u_mpc'][0,0], # a_des
-                                                  sol_dict['z_mpc'][1,3],#+1*(np.random.rand(1)-0.5).item(), # v_des
-                                                  sol_dict['u_mpc'][0,1])#+0.6*(np.random.rand(1)-0.5).item()) # df_des
+        control =  self._low_level_control.update(speed, # v_curr
+                                                  u0[0], # a_des
+                                                  v_des, # v_des
+                                                  u0[1]) # df_des
 
         # if self.counter % 10 == 0:
         #     plt.subplot(311)
@@ -155,7 +155,7 @@ class MPCAgent(object):
 
         # self.counter += 1
 
-        return control, state_prev, control_prev, sol_dict['optimal'], sol_dict['solve_time']
+        return control, z0, u0, is_opt, solve_time
 
     ################################################################################################
     ########################## Helper / Update Functions ###########################################
