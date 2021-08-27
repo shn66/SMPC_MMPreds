@@ -21,6 +21,7 @@ sys.path.append(scriptdir)
 from utils import frenet_trajectory_handler as fth
 from utils import mpc_utils as smpc
 from utils.low_level_control import LowLevelControl
+from utils.vehicle_geometry_utils import vehicle_name_to_lf_lr
 
 class SMPCAgent(object):
 	""" Implementation of an agent using multimodal predictions and stochastic MPC for control. """
@@ -44,6 +45,7 @@ class SMPCAgent(object):
 		self.planner = GlobalRoutePlanner( GlobalRoutePlannerDAO(self.map, sampling_resolution=0.5) )
 		self.planner.setup()
 
+		self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
 		self._low_level_control = LowLevelControl(vehicle)
 
 		self.time=0
@@ -115,8 +117,10 @@ class SMPCAgent(object):
 
 
 		# MPC initialization (might take a while....)
-		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag)
-		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes)
+		self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
+			                        L_F=self.lf, L_R=self.lr)
+		self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes,
+			                              L_F=self.lf, L_R=self.lr)
 
 		# Control setup and parameters.
 
@@ -171,7 +175,7 @@ class SMPCAgent(object):
 			self.ref_dict={'x_ref':self.reference[1:,1], 'y_ref':self.reference[1:,2], 'psi_ref':self.reference[1:,3], 'v_ref':self.reference[1:,4],
 							'x0'  : self.reference[0,1],  'y0'  : self.reference[0,2],  'psi0'  : self.reference[0,3],  'v0'  : self.reference[0,4], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
 			self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
-			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=self.dt)
+			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=self.dt, L_F=self.lf, L_R=self.lr)
 			self.feas_ref_gen.update(self.ref_dict)
 			self.feas_ref_dict=self.feas_ref_gen.solve()
 			self.feas_ref_states=self.feas_ref_dict['z_opt']
@@ -184,7 +188,7 @@ class SMPCAgent(object):
 
 			x,y,psi,speed=state
 
-			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon-self.t_ref-1, DT=self.dt)
+			self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon-self.t_ref-1, DT=self.dt, L_F=self.lf, L_R=self.lr)
 
 			self.ref_dict={'x_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,0], 'y_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,1], 'psi_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,2], 'v_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,3],
 							'x0'  : x,  'y0'  : y,  'psi0'  : psi,  'v0'  : speed, 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
@@ -269,6 +273,8 @@ class SMPCAgent(object):
 				u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
 				v_next    = sol_dict['v_next']
 				print(f"\toptimal?: {sol_dict['optimal']}")
+				print(f"\tv_next: {sol_dict['v_next']}")
+				print(f"\tsteering: {u_control[1]+update_dict['df_ref'][0]}")
 
 			else:
 				N_TV=len(target_vehicle_positions)

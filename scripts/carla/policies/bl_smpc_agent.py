@@ -17,6 +17,7 @@ scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
 from utils import frenet_trajectory_handler as fth
 from utils.low_level_control import LowLevelControl
+from utils.vehicle_geometry_utils import vehicle_name_to_lf_lr
 import matplotlib.pyplot as plt
 
 class BLSMPCAgent(object):
@@ -47,8 +48,8 @@ class BLSMPCAgent(object):
         # TODO: remove hard-coded values.
         self.nominal_speed = nominal_speed_mps # m/s
         self.lat_accel_max = 3.0  # m/s^2
-
-        self._setup_mpc(N=N, DT=dt, N_modes=N_modes)
+        self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
+        self._setup_mpc(N=N, dt=dt, N_modes=N_modes, L_F=self.lf, L_R=self.lr)
 
         self._fit_velocity_profile()
 

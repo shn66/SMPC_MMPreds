@@ -4,6 +4,10 @@ import sys
 import numpy as np
 import time
 
+scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
+sys.path.append(scriptdir)
+from utils import frenet_trajectory_handler as fth
+
 class StaticAgent(object):
     """ A path following agent with collision avoidance constraints over a short horizon. """
 
@@ -22,7 +26,7 @@ class StaticAgent(object):
     def done(self):
         return True
 
-    def run_step(self, **kwargs):
+    def run_step(self, pred_dict):
         vehicle_tf    = self.vehicle.get_transform()
         vehicle_vel   = self.vehicle.get_velocity()
 
@@ -34,4 +38,4 @@ class StaticAgent(object):
         z0 = np.array([x, y, psi, speed]) # current kinematic state
         u0 = np.array([0., 0.])           # acceleration, steering angle setpoint for low-level control
 
-        return self.static_control, z0, u0
+        return self.static_control, z0, u0, True, np.nan
