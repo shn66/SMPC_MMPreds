@@ -246,7 +246,7 @@ class RunIntersectionScenario:
                  drone_viz_params    : DroneVizParams,
                  vehicle_params_list : List[VehicleParams],
                  prediction_params   : PredictionParams,
-                 save_location : str):
+                 savedir : str):
         try:
             self._setup_carla_world(carla_params)
             self._setup_vehicles(vehicle_params_list, carla_params)
@@ -255,6 +255,10 @@ class RunIntersectionScenario:
         except Exception as e:
             print("Failed to setup the scenario!")
             raise e
+
+        # For logging results + videos.
+        self.savedir = savedir
+        os.makedirs(self.savedir, exist_ok=True)
 
         # Needed for Sync mode loop.
         self.timeout   = carla_params.timeout_period
@@ -270,10 +274,27 @@ class RunIntersectionScenario:
         # TODO: document this better.
         # TODO: log the results and figure out where to save.
 
+        # Return flag to indicate if this ran to completion.
+        ran_successfully = False
+
+        # Video Setup
         writer = None
         if self.viz_params.save_avi:
-            # TODO: fix f.
-            writer = cv2.VideoWriter(f, cv2.VideoWriter_fourcc(*'MJPG'), self.carla_fps, (self.viz_params.img_width, self.viz_params.img_height))
+            avi_name = os.path.join(self.savedir, "carla_sim.avi")
+            writer   = cv2.VideoWriter(avi_name, cv2.VideoWriter_fourcc(*'MJPG'), self.carla_fps, (self.viz_params.img_width, self.viz_params.img_height))
+
+        # Data Logging Setup
+        results_dict = {}
+        for ind_vehicle, vehicle in enumerate(self.vehicle_actors):
+            key = f"{vehicle.attributes["role_name"]}_{ind_vehicle}"
+            # TODO: check l_f + l_r.  Pass it to MPC?
+            # TODO: update this in the loop and save.
+            results_dict[key] = {"l_f"              : 1.5,
+                                 "l_r"              : 1.5,
+                                 "state_trajectory" : [],
+                                 "input_trajectory" : [],
+                                 "feasibility"      : [],
+                                 "solve_times"      : []}
 
         try:
             with CarlaSyncMode(self.world, self.drone, fps=self.carla_fps) as sync_mode:
@@ -341,6 +362,11 @@ class RunIntersectionScenario:
                     if self.viz_params.save_avi:
                         writer.write(img_drone)
 
+                # Save results and mark successful completion.
+                pickle.dump(fname, dict)
+
+                ran_successfully = True
+
         # Teardown.
         finally:
             if writer:
@@ -349,6 +375,8 @@ class RunIntersectionScenario:
                 actor.destroy()
             self.drone.destroy()
             cv2.destroyAllWindows()
+
+        return ran_successfully
 
     def _make_predictions(self):
         if len(self.tv_vehicle_idxs) == 0:
@@ -425,7 +453,7 @@ class RunIntersectionScenario:
         for idx, vp in enumerate(vehicle_params_list):
             veh_bp = bp_library.filter(vp.vehicle_type)
             veh_bp.set_attribute("color", vp.vehicle_color)
-            veh_bp.set_attribute("role", vp.role)
+            veh_bp.set_attribute("role_name", vp.role)
 
             if vp.role == "ego":
                 ego_vehicle_idxs.append(idx)
@@ -452,7 +480,7 @@ class RunIntersectionScenario:
             self.vehicle_actors.append(veh_actor)
             self.vehicle_policies.append(veh_policy)
 
-        if len(ego_vehicle_idxs) != 0:
+        if len(ego_vehicle_idxs) != 1:
             raise RuntimeError(f"Invalid number of ego vehicles spawned: {len(ego_vehicle_idxs)}")
         self.ego_vehicle_idx = ego_vehicle_idx[0]
         self.ego_N           = vehicle_params_list[self.ego_vehicle_idx].N
