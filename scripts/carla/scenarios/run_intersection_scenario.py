@@ -85,6 +85,7 @@ class VehicleParams:
     goal_left_offset            : float      # how far to move the car's goal pose in its local left (i.e. lateral axis) direction (m)
     start_longitudinal_offset   : float      # how far to move the car's start pose in its local fwd (i.e. longitudinal axis) direction (m)
     goal_longitudinal_offset    : float      # how far to move the car's goal pose in its local fwd (i.e. longitudinal axis) direction (m)
+    nominal_speed               : float      # how fast the car should travel if unobstructed / not turning
     init_speed                  : float = 0. # the car's initial speed in simulation (m/s)
 
     # General MPC parameters.  Some of these can be ignored (e.g. n_modes if using MPCAgent).
