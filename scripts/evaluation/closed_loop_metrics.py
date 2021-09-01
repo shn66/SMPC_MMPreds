@@ -60,7 +60,7 @@ def time_to_complete(cl_traj : ClosedLoopTrajectory) -> float:
 	start_time = cl_traj.state_trajectory[ 0,0]
 	end_time   = cl_traj.state_trajectory[-1,0]
 	return end_time - start_time
-
+#TODO: ADD avg jerks.
 def max_lateral_acceleration(cl_traj : ClosedLoopTrajectory) -> float:
 	return np.amax( np.abs(cl_traj.lat_accel) )
 
