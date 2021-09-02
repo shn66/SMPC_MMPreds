@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 import numpy as np
 
@@ -28,9 +28,6 @@ class ClosedLoopTrajectory:
 		   self.solve_times.shape[0]:
 			raise ValueError("Fields state_trajectory, input_trajectory, feasibility, and solve_times have varying number of timestamps")
 
-		if not np.allclose(self.state_trajectory[:,0], self.input_trajectory[:,0]):
-			raise ValueError("State and input trajectory timestamps do not match")
-
 		if self.l_f <= 0 or self.l_r <= 0:
 			raise ValueError(f"Expected positive l_f : {self.l_f} and l_r : {self.l_r}")
 
@@ -38,17 +35,18 @@ class ClosedLoopTrajectory:
 		if np.any( np.isclose(dts, 0.) ) or np.any( dts < 0 ):
 			raise ValueError(f"Expected only positive dts but encountered zero/negative dt: {np.amin(dts)}")
 
-		self.N = self.state_trajectory.shape[0]
+		object.__setattr__(self, "N", self.state_trajectory.shape[0])
 
-		beta = np.atan( self.l_r / (self.l_f + self.l_r) * np.tan(self.input_trajectory[:,1]) )
-		self.curvature = np.sin(beta) / self.l_r
+		beta = np.arctan( self.l_r / (self.l_f + self.l_r) * np.tan(self.input_trajectory[:,1]) )
 
-		self.lat_accel = self.curvature * np.square(self.state_trajectory[:, -1])
+		object.__setattr__(self, "curvature", np.sin(beta) / self.l_r)
+
+		object.__setattr__(self, "lat_accel", self.curvature * np.square(self.state_trajectory[:, -1]))
 
 		long_jerk = np.diff(self.input_trajectory[:,0]) / dts
 		lat_jerk  = np.diff(self.curvature) / dts * np.square(self.state_trajectory[:-1,-1]) + \
 		                2 * self.curvature[:-1] * self.input_trajectory[:-1, 0] * self.state_trajectory[:-1, -1]
-		self.jerk = np.column_stack((long_jerk, lat_jerk))
+		object.__setattr__(self, "jerk", np.column_stack((long_jerk, lat_jerk)))
 
 	def __str__(self):
 		return f"Trajectory with {self.N} timestamps."
@@ -60,7 +58,7 @@ def time_to_complete(cl_traj : ClosedLoopTrajectory) -> float:
 	start_time = cl_traj.state_trajectory[ 0,0]
 	end_time   = cl_traj.state_trajectory[-1,0]
 	return end_time - start_time
-#TODO: ADD avg jerks.
+
 def max_lateral_acceleration(cl_traj : ClosedLoopTrajectory) -> float:
 	return np.amax( np.abs(cl_traj.lat_accel) )
 
@@ -69,6 +67,12 @@ def max_longitudinal_jerk(cl_traj : ClosedLoopTrajectory) -> float:
 
 def max_lateral_jerk(cl_traj : ClosedLoopTrajectory) -> float:
 	return np.amax( np.abs(cl_traj.jerk[:,1]) )
+
+def avg_longitudinal_jerk(cl_traj : ClosedLoopTrajectory) -> float:
+	return np.mean( np.abs(cl_traj.jerk[:,0]) )
+
+def avg_lateral_jerk(cl_traj : ClosedLoopTrajectory) -> float:
+	return np.mean( np.abs(cl_traj.jerk[:,1]) )
 
 def feasibility_percent(cl_traj : ClosedLoopTrajectory) -> float:
 	feasible_bool = cl_traj.feasibility.astype(np.bool)
@@ -98,10 +102,6 @@ Main class to hold scenario data and compute metrics.
 """
 @dataclass(frozen=True)
 class ScenarioResult:
-	# Experiment setup / metadata fields:
-	scenario_name : str
-	policy_type   : str
-
 	# Ego vehicle closed-loop trajectory:
 	ego_closed_loop_trajectory  : ClosedLoopTrajectory
 
@@ -116,6 +116,8 @@ class ScenarioResult:
 		metric_dict["max_lateral_acceleration"] = max_lateral_acceleration(self.ego_closed_loop_trajectory)
 		metric_dict["max_longitudinal_jerk"]    = max_longitudinal_jerk(self.ego_closed_loop_trajectory)
 		metric_dict["max_lateral_jerk"]         = max_lateral_jerk(self.ego_closed_loop_trajectory)
+		metric_dict["avg_longitudinal_jerk"]    = avg_longitudinal_jerk(self.ego_closed_loop_trajectory)
+		metric_dict["avg_lateral_jerk"]         = avg_lateral_jerk(self.ego_closed_loop_trajectory)
 		metric_dict["feasibility_percent"]      = feasibility_percent(self.ego_closed_loop_trajectory)
 		metric_dict["average_solve_time"]       = get_average_solve_time(self.ego_closed_loop_trajectory)
 		metric_dict["dmins_per_TV"]             = get_min_dist_per_TV(self.ego_closed_loop_trajectory, \
