@@ -47,7 +47,7 @@ class MPCAgent(object):
 
         # TODO: remove hard-coded values.
         self.nominal_speed = nominal_speed_mps # m/s
-        self.lat_accel_max = 3.0  # m/s^2
+        self.lat_accel_max = 2.0  # m/s^2
 
         self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
         self._setup_mpc(N=N, DT=dt, L_F=self.lf, L_R=self.lr)
@@ -153,7 +153,6 @@ class MPCAgent(object):
 
         #     plt.show()
 
-        # self.counter += 1
 
         return control, z0, u0, is_opt, solve_time
 
@@ -270,9 +269,9 @@ class MPCAgent(object):
     def _setup_mpc(self,
                    N          =   10,   # timesteps in MPC Horizon
                    DT         =  0.2,   # discretization time between timesteps (s)
-                   N_PRED_TV  =    5,   # timesteps for target vehicle prediction
+                   N_PRED_TV  =    4,   # timesteps for target vehicle prediction
                    NUM_TVS    =    5,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  5.0,  # square of minimum 2-norm distance to a target vehicle
+                   D_MIN_SQ   =  12.0,  # square of minimum 2-norm distance to a target vehicle
                    L_F        =  1.5,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.5,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)

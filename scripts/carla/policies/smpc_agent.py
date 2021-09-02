@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import pdb
+from scipy.signal import filtfilt
 CARLA_ROOT = os.getenv("CARLA_ROOT")
 if CARLA_ROOT is None:
     raise ValueError("CARLA_ROOT must be defined.")
@@ -44,10 +45,8 @@ class SMPCAgent(object):
         self.N_modes=N_modes
         self.planner = GlobalRoutePlanner( GlobalRoutePlannerDAO(self.map, sampling_resolution=0.5) )
         self.planner.setup()
-
         self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
         self._low_level_control = LowLevelControl(vehicle)
-
         self.time=0
         self.t_ref=0
         if smpc_config=="full":
@@ -115,18 +114,16 @@ class SMPCAgent(object):
         # plt.ylabel('df')
         # plt.show()
 
-
+        # pdb.set_trace()
         # MPC initialization (might take a while....)
-        self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
-                                    L_F=self.lf, L_R=self.lr)
-        self.SMPC_OL=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes,
+        if not self.ol_flag:
+            self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
+                                        L_F=self.lf, L_R=self.lr)
+        else:
+            self.SMPC=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes,
                                           L_F=self.lf, L_R=self.lr)
 
-        # Control setup and parameters.
 
-        self.max_steer_angle = np.radians( self.vehicle.get_physics_control().wheels[0].max_steer_angle )
-        self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
-        self.k_v           = 0.6
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
 
 
@@ -151,11 +148,65 @@ class SMPCAgent(object):
         y_disc    = np.interp(t_disc, t_fits, traj[:,2])
         yaw_disc  = np.interp(t_disc, t_fits, traj[:,3])
         curv_disc = np.interp(t_disc, t_fits, traj[:,4])
-
         v_disc    = np.diff(s_disc) / np.diff(t_disc)
         v_disc    = np.insert(v_disc, -1, v_disc[-1]) # repeat the last speed
 
+        # v_int    = filtfilt(np.ones((3,))/3,1,v_disc)
+        # curv_int = filtfilt(np.ones((3,))/3,1,curv_disc)
+
+        # s_int = [ s_disc[0] ]
+        # x_int = [ x_disc[0] ]
+        # y_int = [ y_disc[0] ]
+        # yaw_int = [ yaw_disc[0] ]
+
+        # for vel in v_int:
+        #     ds = vel * self.dt
+        #     curr_s = s_int[-1] + ds
+        #     curv = np.interp(curr_s, s_disc, curv_disc)
+
+        #     dx = np.cos(yaw_int[-1]) * ds
+        #     dy = np.sin(yaw_int[-1]) * ds
+        #     dyaw = curv * ds
+
+        #     s_int.append( curr_s )
+        #     x_int.append( x_int[-1] + dx )
+        #     y_int.append( y_int[-1] + dy )
+        #     yaw_int.append( yaw_int[-1] + dyaw )
+
+        # s_int = np.array(s_int[:-1])
+        # x_int = np.array(x_int[:-1])
+        # y_int = np.array(y_int[:-1])
+        # yaw_int = np.array(yaw_int[:-1])
+
+        # plt.subplot(211)
+        # plt.plot(t_disc, v_disc, 'rx')
+        # plt.plot(t_disc, v_int, 'b')
+        # plt.subplot(212)
+        # plt.plot(t_disc, curv_disc, 'rx')
+        # plt.plot(t_disc, curv_int, 'b')
+
+        # plt.figure()
+        # plt.subplot(411)
+        # plt.plot(t_disc, s_disc, 'rx')
+        # plt.plot(t_disc, s_int, 'b')
+
+        # plt.subplot(412)
+        # plt.plot(t_disc, x_disc, 'rx')
+        # plt.plot(t_disc, x_int, 'b')
+
+        # plt.subplot(413)
+        # plt.plot(t_disc, y_disc, 'rx')
+        # plt.plot(t_disc, y_int, 'b')
+
+        # plt.subplot(414)
+        # plt.plot(t_disc, yaw_disc, 'rx')
+        # plt.plot(t_disc, yaw_int, 'b')
+
+        # plt.show()
+
+
         self.reference = np.column_stack((t_disc, x_disc, y_disc, yaw_disc, v_disc))
+        # self.reference = np.column_stack((t_disc, x_int, y_int, yaw_int, v_int))
 
 
     def reference_regeneration(self, *state):
@@ -167,7 +218,7 @@ class SMPCAgent(object):
             way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
             self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
             self.nominal_speed = self.nominal_speed_mps
-            self.lat_accel_max = 4.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
+            self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
 
             self.fit_velocity_profile()
 
@@ -184,6 +235,11 @@ class SMPCAgent(object):
             self.feas_ref_inputs=np.vstack((self.feas_ref_inputs, np.array([self.feas_ref_inputs[-1,:]]*self.N)))
             self.feas_ref_states_new=self.feas_ref_states
             self.feas_ref_inputs_new=self.feas_ref_inputs
+            # plt.plot(-self.feas_ref_states_new[:,1], self.feas_ref_states_new[:,0], 'kx', -self.feas_ref_states[:,1], self.feas_ref_states[:,0], 'ro')
+            # plt.plot(-self.reference[:,2], self.reference[:,1], 'r-')
+            # plt.axis("equal")
+            # plt.show()
+            # pdb.set_trace()
         else:
 
             x,y,psi,speed=state
@@ -196,9 +252,14 @@ class SMPCAgent(object):
             self.feas_ref_gen.update(self.ref_dict)
             self.feas_ref_dict=self.feas_ref_gen.solve()
             self.feas_ref_states_new=self.feas_ref_dict['z_opt']
+
             self.feas_ref_states_new=np.vstack((self.feas_ref_states_new, np.array([self.feas_ref_states_new[-1,:]]*(self.N+1))))
             self.feas_ref_inputs_new=self.feas_ref_dict['u_opt']
-            self.feas_ref_inputs_new=np.vstack((self.feas_ref_inputs_new, np.array([self.feas_ref_inputs_new[-1,:]]*self.N)))
+            print(self.feas_ref_inputs_new.shape)
+            if len(self.feas_ref_inputs_new.shape)!=1:
+                self.feas_ref_inputs_new=np.vstack((self.feas_ref_inputs_new, np.array([self.feas_ref_inputs_new[-1,:]]*self.N)))
+            else:
+                self.feas_ref_inputs_new=np.array([self.feas_ref_inputs_new]*(self.N+1)).reshape(self.N+1,2)
             # plt.plot(-self.feas_ref_states_new[:,1], self.feas_ref_states_new[:,0], 'kx', -self.feas_ref_states[:,1], self.feas_ref_states[:,0], 'ro')
             # plt.show()
 
@@ -252,7 +313,7 @@ class SMPCAgent(object):
 
         else:
             # Run SMPC Preds.
-            if self.time%10==0 and self.time>0:
+            if self.time%60==0 and self.time>0 and self.ref_horizon>self.t_ref+1:
                 self.reference_regeneration(x,y,psi,speed)
 
             t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
@@ -270,35 +331,38 @@ class SMPCAgent(object):
 
             if self.ol_flag:
 
-                self.SMPC_OL.update(update_dict)
-                sol_dict=self.SMPC_OL.solve()
+                self.SMPC.update(update_dict)
+                sol_dict=self.SMPC.solve()
 
                 u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
                 v_next    = sol_dict['v_next']
-                print(f"\toptimal?: {sol_dict['optimal']}")
-                print(f"\tv_next: {sol_dict['v_next']}")
-                print(f"\tsteering: {u_control[1]+update_dict['df_ref'][0]}")
+                is_opt    = sol_dict['optimal']
+                solve_time=sol_dict['solve_time']
+
 
             else:
+
                 N_TV=len(target_vehicle_positions)
-                t_bar=3
+                t_bar=4
                 i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
                 self.SMPC.update(i, update_dict)
                 sol_dict=self.SMPC.solve(i)
 
                 u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
                 v_next    = sol_dict['v_next']
-                print(f"\toptimal?: {sol_dict['optimal']}")
-                print(f"\tv_next: {sol_dict['v_next']}")
-                print(f"\tsteering: {u_control[1]+update_dict['df_ref'][0]}")
-                # print(f"\tv_ref_next: {self.feas_ref_states[self.t_ref+1,3]}")
-                # print(f"\tv_ref_new_next: {self.feas_ref_states_new[t_ref_new+1,3]}")
-                print(self.time)
+                is_opt=sol_dict['optimal']
+                solve_time=sol_dict['solve_time']
+
             self.control_prev=np.array([u_control[0]+update_dict['a_ref'][0],u_control[1]+update_dict['df_ref'][0]])
             u0=self.control_prev
-            v_des=sol_dict['v_next']
-            is_opt=sol_dict['optimal']
-            solve_time=sol_dict['solve_time']
+            v_des=v_next
+
+            print(f"\toptimal?: {is_opt}")
+            print(f"\tv_next: {v_next}")
+            print(f"\tsteering: {u_control[1]+update_dict['df_ref'][0]}")
+            print(f"\tsolve time: {solve_time}")
+            print(self.t_ref, self.time)
+
         control = self._low_level_control.update(speed,      # v_curr
                                                  u0[0], # a_des
                                                  v_des, # v_des

@@ -264,6 +264,8 @@ class RunIntersectionScenario:
         # Needed for Sync mode loop.
         self.timeout   = carla_params.timeout_period
         self.carla_fps = carla_params.fps
+        self.iter_ctr=0
+        self.max_iters= self.carla_fps*30 # limit scenario run to 30 seconds max
 
         # Needed for OpenCV/Carla world visualization.
         self.viz_params = drone_viz_params
@@ -324,14 +326,16 @@ class RunIntersectionScenario:
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
 
                         control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict)
-                        z0 = np.append(t_elapsed, z0) # add the Carla timestamp
-                        act_key = f"{act.attributes['role_name']}_{idx_act}"
-                        results_dict[act_key]["state_trajectory"].append(z0)
-                        results_dict[act_key]["input_trajectory"].append(u0)
-                        results_dict[act_key]["feasibility"].append(is_feasible)
-                        results_dict[act_key]["solve_times"].append(solve_time)
+                        if not policy.done():
+                            z0 = np.append(t_elapsed, z0) # add the Carla timestamp
+                            act_key = f"{act.attributes['role_name']}_{idx_act}"
+                            results_dict[act_key]["state_trajectory"].append(z0)
+                            results_dict[act_key]["input_trajectory"].append(u0)
+                            results_dict[act_key]["feasibility"].append(is_feasible)
+                            results_dict[act_key]["solve_times"].append(solve_time)
 
-                        completed = completed and policy.done()
+                        # true at the end of the loop only if all agents are done or if iter_ctr>=max_iters
+                        completed = completed and (policy.done() or self.iter_ctr>=self.max_iters)
                         act.apply_control(control)
 
                         if idx_act == self.ego_vehicle_idx:
@@ -340,6 +344,7 @@ class RunIntersectionScenario:
                             ego_speed = np.linalg.norm([ego_vel.x, ego_vel.y])
                             ego_ctrl  = control
 
+                    self.iter_ctr+=1
                     # Get drone camera image.
                     img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)
                     img_drone = np.reshape(img_drone, (img.height, img.width, 4))
@@ -398,7 +403,7 @@ class RunIntersectionScenario:
                 actor.destroy()
             self.drone.destroy()
             cv2.destroyAllWindows()
-
+            # import pdb; pdb.set_trace()
         return ran_successfully
 
     def _make_predictions(self):

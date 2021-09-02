@@ -47,7 +47,7 @@ class BLSMPCAgent(object):
 
         # TODO: remove hard-coded values.
         self.nominal_speed = nominal_speed_mps # m/s
-        self.lat_accel_max = 3.0  # m/s^2
+        self.lat_accel_max = 2.0  # m/s^2
         self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
         self._setup_mpc(N=N, DT=dt, N_modes=N_modes, L_F=self.lf, L_R=self.lr)
 
@@ -128,10 +128,14 @@ class BLSMPCAgent(object):
                 self.warm_start['sl_ws']      = sol_dict['sl_mpc']
 
 
-            u0=sol_dict['u_mpc'][0,:]
+            u0=sol_dict['u_control']
             is_opt     = sol_dict['optimal']
             solve_time = sol_dict['solve_time']
-            v_des = sol_dict['z_mpc'][1,3]
+            v_des = sol_dict['v_next']
+            print(f"\toptimal?: {is_opt}")
+            print(f"\tv_next: {v_des}")
+            print(f"\tsteering: {u0[1]}")
+            print(f"\tsolve time: {solve_time}")
 
         # Get low level control.
         control =  self._low_level_control.update(speed,      # v_curr
@@ -162,7 +166,6 @@ class BLSMPCAgent(object):
 
         #     plt.show()
 
-        # self.counter += 1
 
         return control, z0, u0, is_opt, solve_time
 
@@ -280,15 +283,14 @@ class BLSMPCAgent(object):
     def _setup_mpc(self,
                    N          =   10,   # timesteps in MPC Horizon
                    DT         =  0.2,   # discretization time between timesteps (s)
-                   N_PRED_TV  =   10,   # timesteps for target vehicle prediction
                    N_modes    =    2,   # modes for target vehicle prediction
                    NUM_TVS    =    1,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  16.0,  # square of minimum 2-norm distance to a target vehicle
+                   D_MIN_SQ   =  25.0,  # square of minimum 2-norm distance to a target vehicle
                    RISK       =  0.1,
                    L_F        =  1.7213,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.4987,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
-                   V_MAX      = 15.0,
+                   V_MAX      = 20.0,
                    A_MIN      = -3.0,   # min/max acceleration constraint (m/s^2)
                    A_MAX      =  2.0,
                    DF_MIN     = -0.5,   # min/max front steer angle constraint (rad)
@@ -298,10 +300,10 @@ class BLSMPCAgent(object):
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 10000,      # weights for slack on collision avoidance (norm constraint).
-                   Q = [100., 100., 500., 1], # weights on x, y, and v.
-                   R = [1., 10.]):
-                   # Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
-                   # R = [10., 100.]):       # weights on jerk and slew rate (steering angle derivative)
+                   Q = [100., 100., 500., 0.1], # weights on x, y, and v.
+                   R = [100., 1000.]):
+                   # Q = [1., 1., 10., 0.1], # weights on x, y, and v.
+                   # R = [10, 100.]):       # weights on jerk and slew rate (steering angle derivative)
 
         for key in list(locals()):
             if key == 'self':
@@ -314,7 +316,8 @@ class BLSMPCAgent(object):
                 setattr(self, '%s' % key, locals()[key])
 
         self.opti = casadi.Opti()
-
+        self.a_brake = -7.0
+        self.N_PRED_TV=self.N
         """ Parameters """
         self.u_prev  = self.opti.parameter(2)       # previous input: [u_{acc, -1}, u_{df, -1}]
         self.z_curr  = self.opti.parameter(4)       # current state:  [x_0, y_0, psi_0, v_0]
@@ -491,6 +494,7 @@ class BLSMPCAgent(object):
 
     def _solve(self):
         st = time.time()
+        sol_dict = {}
         try:
             sol = self.opti.solve()
             # Optimal solution.
@@ -499,6 +503,8 @@ class BLSMPCAgent(object):
             sl_mpc = sol.value(self.sl_dv)
             sl_obst_mpc = sol.value(self.sl_obst_dv)
             z_ref  = sol.value(self.z_ref)
+            u_control=u_mpc[0,:]
+            v_next=z_mpc[1,3]
             # tv_refs = [ sol.value(self.tv_refs[i]) for i in range(self.NUM_TVS) ]
             is_opt = True
         except:
@@ -508,14 +514,18 @@ class BLSMPCAgent(object):
             sl_mpc = self.opti.debug.value(self.sl_dv)
             sl_obst_mpc = self.opti.debug.value(self.sl_obst_dv)
             z_ref  = self.opti.debug.value(self.z_ref)
+            u_control=u_mpc[0,:]
+            v_next=z_mpc[1,3]
+            # v_next=z_mpc[0,3]+self.DT*self.a_brake
             # tv_refs = [ self.opti.debug.value(self.tv_refs[i]) for i in range(self.NUM_TVS) ]
             is_opt = False
 
         solve_time = time.time() - st
 
-        sol_dict = {}
-        sol_dict['u_control']   = u_mpc[0,:]  # control input to apply based on solution
+
+        sol_dict['u_control']   = u_control  # control input to apply based on solution
         sol_dict['optimal']     = is_opt      # whether the solution is optimal or not
+        sol_dict['v_next']      = v_next
         if not is_opt:
             sol_dict['solve_time'] = np.nan  # how long the solver took in seconds
         else:
