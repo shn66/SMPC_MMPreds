@@ -1,7 +1,9 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 import numpy as np
 import pickle
+from scipy.spatial.distance import directed_hausdorff
 
 """
 Main class to store a closed loop trajectory for analysis.
@@ -153,11 +155,10 @@ class ScenarioResult:
 
 		d_H = max(directed_hausdorff(xy_self, xy_other)[0],
 			      directed_hausdorff(xy_other, xy_self)[0])
-
 		return d_H
 
 def load_scenario_result(pkl_path):
-    scenario_dict = pickle.load(open(pkl_path), "rb")
+    scenario_dict = pickle.load(open(pkl_path, "rb"))
 
     ego_entry   = [v for (k, v) in scenario_dict.items() if "ego" in k]
     tv_entries  = [v for (k, v) in scenario_dict.items() if "ego" not in k]

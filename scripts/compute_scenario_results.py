@@ -24,7 +24,7 @@ def get_metric_dataframe(results_dir):
             raise RuntimeError(f"Unable to find a scenario_result.pkl in directory: {scenario_dir}")
 
         notv_pkl_path = os.path.join(re.split(f"{policy}", scenario_dir)[0] + "notv", "scenario_result.pkl")
-        if not os.path_exists(notv_pkl_path):
+        if not os.path.exists(notv_pkl_path):
             raise RuntimeError(f"Unable to find a notv scenario_result.pkl in location: {notv_pkl_path}")
 
         # Load scenario dict for this policy and the notv case (for Hausdorff distance).
@@ -50,8 +50,8 @@ def normalize_by_notv(df):
     # Right now, these metrics are completion_time and max_lateral_acceleration.
 
     # Add the new columns with normalized values.
-    df = df.assign( "max_lateral_acceleration_norm" = df.max_lateral_acceleration,
-                    "completion_time_norm" = df.completion_time)
+    df = df.assign( max_lateral_acceleration_norm = df.max_lateral_acceleration,
+                    completion_time_norm = df.completion_time)
 
     # Do the normalization per scenario / ego initial condition.
     scene_inits = set( [f"{s}_{i}" for (s,i) in zip(df.scenario, df.initial)])
@@ -84,7 +84,7 @@ def aggregate(df):
             subset_inds = np.logical_and( df.scenario == scenario, df.policy == policy )
 
             res = df[subset_inds].mean(numeric_only=True)
-            res.drop(["initial", "scenario", "policy"], inplace=True)
+            res.drop(["initial", "scenario"], inplace=True)
 
             res_dict = {"scenario": int(scenario), "policy": policy}
             res_dict.update(res.to_dict())
