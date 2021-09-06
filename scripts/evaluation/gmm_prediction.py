@@ -56,7 +56,8 @@ class GMMPrediction:
 		return ades
 
 	def transform(self, R, t):
-		# TODO: could vectorize this.
+		# Applies a transformation specified by rotation R
+		# and translation t to the GMM trajectories.
 		for mode_id in range(self.n_modes):
 			for tm_step in range(self.n_timesteps):
 				new_mu = R @ self.mus[mode_id, tm_step] + t
