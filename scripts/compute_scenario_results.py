@@ -1,11 +1,10 @@
 import os
 import re
 import glob
-import pickle
 import numpy as np
 import pandas as pd
 
-from evaluation.closed_loop_metrics import ScenarioResult, ClosedLoopTrajectory
+from evaluation.closed_loop_metrics import ScenarioResult, ClosedLoopTrajectory, load_scenario_result
 
 def get_metric_dataframe(results_dir):
     scenario_dirs = sorted(glob.glob(results_dir + "*scenario*"))
@@ -22,25 +21,23 @@ def get_metric_dataframe(results_dir):
 
         pkl_path = os.path.join(scenario_dir, "scenario_result.pkl")
         if not os.path.exists(pkl_path):
-            # TODO: should we be robust to directories without pkl files?
             raise RuntimeError(f"Unable to find a scenario_result.pkl in directory: {scenario_dir}")
 
-        scenario_dict = pickle.load(open(pkl_path, "rb"))
-        ego_entry   = [v for (k, v) in scenario_dict.items() if "ego" in k]
-        tv_entries  = [v for (k, v) in scenario_dict.items() if "ego" not in k]
+        notv_pkl_path = os.path.join(re.split(f"{policy}", scenario_dir)[0] + "notv", "scenario_result.pkl")
+        if not os.path_exists(notv_pkl_path):
+            raise RuntimeError(f"Unable to find a notv scenario_result.pkl in location: {notv_pkl_path}")
 
-        assert len(ego_entry) == 1
-        assert len(ego_entry) + len(tv_entries)  == len(scenario_dict.keys())
-
-        sr = ScenarioResult( ego_closed_loop_trajectory = ClosedLoopTrajectory(**ego_entry[0]),
-                             tv_closed_loop_trajectories = [ClosedLoopTrajectory(**v) for v in tv_entries])
+        # Load scenario dict for this policy and the notv case (for Hausdorff distance).
+        sr      = load_scenario_result(pkl_path)
+        notv_sr = load_scenario_result(notv_pkl_path)
 
         metrics_dict = sr.compute_metrics()
+        metrics_dict["hausdorff_dist_notv"] = sr.compute_ego_hausdorff_dist(notv_sr)
         dmins = metrics_dict.pop("dmins_per_TV")
         if dmins:
             metrics_dict["dmin_TV"] = np.amin(dmins) # take the closest distance to any TV in the scene
         else:
-            metrics_dict["dmin_TV"] = np.nan
+            metrics_dict["dmin_TV"] = np.nan # no moving TVs in the scene
         metrics_dict["scenario"] = scene_num
         metrics_dict["initial"]  = init_num
         metrics_dict["policy"]   = policy

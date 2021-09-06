@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List
 import numpy as np
+import pickle
 
 """
 Main class to store a closed loop trajectory for analysis.
@@ -10,8 +11,8 @@ class ClosedLoopTrajectory:
 	# Arguments required from constructor.
 	state_trajectory : np.ndarray  # N x 5, [time (s), x (m), y(m), yaw(rad), v(m/s)]
 	input_trajectory : np.ndarray  # N x 2, [longitudinal_accel (m/s^2), steering_angle (rad)]
-	feasibility      : np.ndarray  # N x 1, if the corresponding problem was feasible
-	solve_times      : np.ndarray  # N x 1, solve_time of corresponding problem (s)
+	feasibility      : np.ndarray  # N, if the corresponding problem was feasible
+	solve_times      : np.ndarray  # N, solve_time of corresponding problem (s)
 	l_f              : float       # length from center of gravity to front axle (m)
 	l_r              : float       # length from center of gravity to rear axle (m)
 
@@ -22,15 +23,26 @@ class ClosedLoopTrajectory:
 	curvature : np.ndarray = field(init=False, repr=False) # N x 1, curvature
 
 	def __post_init__(self):
+		# Sanity check about constructor arguments..
 		if self.state_trajectory.shape[0] != \
 		   self.input_trajectory.shape[0] != \
-		   self.feasibility.shape[0]      != \
-		   self.solve_times.shape[0]:
+		   self.feasibility.size      != \
+		   self.solve_times.size:
 			raise ValueError("Fields state_trajectory, input_trajectory, feasibility, and solve_times have varying number of timestamps")
+
+		if self.state_trajectory.shape[1] != 5:
+			raise ValueError(f"State trajectory should have vector entries of size 5, not {self.state_trajectory.shape[1]}")
+		if self.input_trajectory.shape[1] != 2:
+			raise ValueError(f"Input trajectory should have vector entries of size 2, not {self.input_trajectory.shape[1]}")
+
+		if len(self.feasibility.shape) > 1 or len(self.solve_times.shape) > 1:
+			raise ValueError("Feasibility and solve times should be vectors, but have shapes: "
+				              f"{self.feasibility.shape} and {self.solve_times.shape}")
 
 		if self.l_f <= 0 or self.l_r <= 0:
 			raise ValueError(f"Expected positive l_f : {self.l_f} and l_r : {self.l_r}")
 
+		# Do the computation of associated states / metadata given constructor arguments.
 		dts = np.diff( self.state_trajectory[:,0] )
 		if np.any( np.isclose(dts, 0.) ) or np.any( dts < 0 ):
 			raise ValueError(f"Expected only positive dts but encountered zero/negative dt: {np.amin(dts)}")
@@ -83,35 +95,26 @@ def get_average_solve_time(cl_traj : ClosedLoopTrajectory) -> float:
 
 def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
 	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
+
 	dmins_tv = [] # dmin (m) where list index corresponds to cl_trajs_tv
 
-	# TODO: finalize logging choice -> end early or keep entries when vehicle reaches destination?
+	def interp_traj(t_range, state_traj):
+		x_interp = np.interp(t_range, state_traj[:,0], state_traj[:, 1])
+		y_interp = np.interp(t_range, state_traj[:,0], state_traj[:, 2])
+		return np.column_stack((x_interp, y_interp))
+
 	for cl_traj_tv in cl_trajs_tv:
-		# if not np.allclose( cl_traj_ego.state_trajectory[:,0], cl_traj_tv.state_trajectory[:,0] ):
-			# raise ValueError("The timestamps between the ego agent and TV agent don't match")
+		# Get the common time interval where the EV and TV are both moving.
 		t_min = max( np.min(cl_traj_tv.state_trajectory[:,0]),
 			         np.min(cl_traj_ego.state_trajectory[:,0]) )
-
 		t_max = min( np.max(cl_traj_tv.state_trajectory[:,0]),
-			         np.max(cl_traj_ego.state_trajectory[:,0]))
+			         np.max(cl_traj_ego.state_trajectory[:,0]) )
+		dt = np.mean( np.diff(cl_traj_ego.state_trajectory[:,0]) )
+		t_range = np.arange(t_min, t_max + 0.5 * dt, dt)
 
-		t_range = np.arange(t_min, t_max + 0.1, 0.2) # TODO: fix this.
-		x_ego = np.interp(t_range,
-			              cl_traj_ego.state_trajectory[:,0],
-			              cl_traj_ego.state_trajectory[:,1])
-		y_ego = np.interp(t_range,
-			              cl_traj_ego.state_trajectory[:,0],
-			              cl_traj_ego.state_trajectory[:,2])
+		positions_ego = interp_traj(t_range, cl_traj_ego.state_trajectory)
+		positions_tv  = interp_traj(t_range, cl_traj_tv.state_trajectory)
 
-		x_tv = np.interp(t_range,
-			             cl_traj_tv.state_trajectory[:,0],
-			             cl_traj_tv.state_trajectory[:,1])
-		y_tv = np.interp(t_range,
-			             cl_traj_tv.state_trajectory[:,0],
-			             cl_traj_tv.state_trajectory[:,2])
-
-		positions_tv  = np.column_stack((x_tv, y_tv))
-		positions_ego = np.column_stack((x_ego, y_ego))
 		dists_ego_tv  = np.linalg.norm(positions_ego - positions_tv, axis=-1)
 		dmins_tv.append( np.amin(dists_ego_tv) )
 
@@ -129,7 +132,7 @@ class ScenarioResult:
 	tv_closed_loop_trajectories : List[ClosedLoopTrajectory]
 
 	# Metric computation
-	def compute_metrics(self):
+	def compute_metrics(self) -> dict:
 		metric_dict = {}
 
 		metric_dict["completion_time"]          = time_to_complete(self.ego_closed_loop_trajectory)
@@ -143,3 +146,24 @@ class ScenarioResult:
 		metric_dict["dmins_per_TV"]             = get_min_dist_per_TV(self.ego_closed_loop_trajectory, \
 			                                                          self.tv_closed_loop_trajectories)
 		return metric_dict
+
+	def compute_ego_hausdorff_dist(self, sc_other : ScenarioResult) -> float:
+		xy_self  = self.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
+		xy_other = sc_other.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
+
+		d_H = max(directed_hausdorff(xy_self, xy_other)[0],
+			      directed_hausdorff(xy_other, xy_self)[0])
+
+		return d_H
+
+def load_scenario_result(pkl_path):
+    scenario_dict = pickle.load(open(pkl_path), "rb")
+
+    ego_entry   = [v for (k, v) in scenario_dict.items() if "ego" in k]
+    tv_entries  = [v for (k, v) in scenario_dict.items() if "ego" not in k]
+    assert len(ego_entry) == 1
+    assert len(ego_entry) + len(tv_entries)  == len(scenario_dict.keys())
+
+    sc = ScenarioResult( ego_closed_loop_trajectory = ClosedLoopTrajectory(**ego_entry[0]),
+                         tv_closed_loop_trajectories = [ClosedLoopTrajectory(**v) for v in tv_entries])
+    return sc
