@@ -37,7 +37,10 @@ def get_metric_dataframe(results_dir):
 
         metrics_dict = sr.compute_metrics()
         dmins = metrics_dict.pop("dmins_per_TV")
-        metrics_dict["dmin_TV"] = np.amin(dmins) # take the closest distance to any TV in the scene
+        if dmins:
+            metrics_dict["dmin_TV"] = np.amin(dmins) # take the closest distance to any TV in the scene
+        else:
+            metrics_dict["dmin_TV"] = np.nan
         metrics_dict["scenario"] = scene_num
         metrics_dict["initial"]  = init_num
         metrics_dict["policy"]   = policy
@@ -95,16 +98,11 @@ def aggregate(df):
 if __name__ == '__main__':
     results_dir = os.path.join(os.path.abspath(__file__).split('scripts')[0], 'results/')
 
-    # TODO: check proper functionality.
-    import pdb; pdb.set_trace()
-
     dataframe = get_metric_dataframe(results_dir)
-    # dataframe.to_csv(os.path.join(results_dir, "df_full.csv"))
+    dataframe.to_csv(os.path.join(results_dir, "df_full.csv"), sep=",")
 
     dataframe = normalize_by_notv(dataframe)
-    # dataframe.to_csv(os.path.join(results_dir, "df_norm.csv"))
+    dataframe.to_csv(os.path.join(results_dir, "df_norm.csv"), sep=",")
 
     dataframe  = aggregate(dataframe)
-    # dataframe.to_csv(os.path.join(results_dir, "df_final.csv"))
-
-
+    dataframe.to_csv(os.path.join(results_dir, "df_final.csv"), sep=",")

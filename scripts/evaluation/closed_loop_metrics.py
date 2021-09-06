@@ -85,13 +85,33 @@ def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
 	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
 	dmins_tv = [] # dmin (m) where list index corresponds to cl_trajs_tv
 
-	# TODO: consider vehicle extent and yaw for Mahalanobis dist vs. Euclidean?
+	# TODO: finalize logging choice -> end early or keep entries when vehicle reaches destination?
 	for cl_traj_tv in cl_trajs_tv:
-		if not np.allclose( cl_traj_ego.state_trajectory[:,0], cl_traj_tv.state_trajectory[:,0] ):
-			raise ValueError("The timestamps between the ego agent and TV agent don't match")
+		# if not np.allclose( cl_traj_ego.state_trajectory[:,0], cl_traj_tv.state_trajectory[:,0] ):
+			# raise ValueError("The timestamps between the ego agent and TV agent don't match")
+		t_min = max( np.min(cl_traj_tv.state_trajectory[:,0]),
+			         np.min(cl_traj_ego.state_trajectory[:,0]) )
 
-		positions_tv  = cl_traj_tv.state_trajectory[:, 1:3]
-		positions_ego = cl_traj_ego.state_trajectory[:, 1:3]
+		t_max = min( np.max(cl_traj_tv.state_trajectory[:,0]),
+			         np.max(cl_traj_ego.state_trajectory[:,0]))
+
+		t_range = np.arange(t_min, t_max + 0.1, 0.2) # TODO: fix this.
+		x_ego = np.interp(t_range,
+			              cl_traj_ego.state_trajectory[:,0],
+			              cl_traj_ego.state_trajectory[:,1])
+		y_ego = np.interp(t_range,
+			              cl_traj_ego.state_trajectory[:,0],
+			              cl_traj_ego.state_trajectory[:,2])
+
+		x_tv = np.interp(t_range,
+			             cl_traj_tv.state_trajectory[:,0],
+			             cl_traj_tv.state_trajectory[:,1])
+		y_tv = np.interp(t_range,
+			             cl_traj_tv.state_trajectory[:,0],
+			             cl_traj_tv.state_trajectory[:,2])
+
+		positions_tv  = np.column_stack((x_tv, y_tv))
+		positions_ego = np.column_stack((x_ego, y_ego))
 		dists_ego_tv  = np.linalg.norm(positions_ego - positions_tv, axis=-1)
 		dmins_tv.append( np.amin(dists_ego_tv) )
 
