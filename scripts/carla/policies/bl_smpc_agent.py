@@ -2,6 +2,7 @@ import carla
 import os
 import sys
 import numpy as np
+from scipy.linalg import sqrtm
 import casadi
 import time
 
@@ -73,6 +74,12 @@ class BLSMPCAgent(object):
         target_vehicle_positions=pred_dict["tvs_positions"]
         target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
+        tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(self.NUM_TVS)]
+        tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(self.NUM_TVS)]
+        tv_Q=np.diag((6**(-2), 4**(-2)))
+        tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(self.NUM_TVS)]
+
+
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y
         psi = -fth.fix_angle(np.radians(vehicle_tf.rotation.yaw))
@@ -106,7 +113,7 @@ class BLSMPCAgent(object):
 
 
             update_dict.update( self._get_reference_traj(**update_dict) )
-            update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1] })
+            update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1], 'tv_shapes': tv_shape_matrices})
             # update_dict['tv_refs']  = self._get_target_vehicles(x, y)
 
             if self.warm_start:
@@ -330,8 +337,11 @@ class BLSMPCAgent(object):
 
         # Collision Avoidance: mean, variance per mode for each target vehicle (spoofed if not present) along horizon.
         self.tv_means = [ [ self.opti.parameter(self.N_PRED_TV, 2) for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
-        self.tv_covs   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
-
+        # self.tv_covs   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+        # self.tv_covs_sqrt   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+        # self.Q_tv   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+        self.P_tv_oa   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+        self.eig_tv_oa   = [ [ [ self.opti.parameter(2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
         """ Decision Variables """
         self.z_dv = self.opti.variable(self.N+1, 4)  # solution trajectory starting at timestep 0.
         self.x_dv   = self.z_dv[:, 0]
@@ -365,7 +375,8 @@ class BLSMPCAgent(object):
 
         tv_means_fake = self.NUM_TVS*[1000*np.ones((self.N_modes, self.N_PRED_TV, 2))]
         tv_covs_fake   = self.NUM_TVS*[np.stack(self.N_modes*[self.N_PRED_TV*[np.identity(2)]])]
-        self._update_obstacles(tv_means_fake, tv_covs_fake)
+        tv_shapes_fake = self.NUM_TVS*[self.N_modes*[self.N*[0.1*np.identity(2)]]]
+        self._update_obstacles(tv_means_fake, tv_covs_fake, tv_shapes_fake)
 
         self.opti.solver("ipopt", {"expand": False}, {"max_cpu_time": 2.0, "print_level": 0})
 
@@ -432,11 +443,11 @@ class BLSMPCAgent(object):
 
                     # Mean and Covariance of a generalized chi^2 distribution
 
-                    mu_oac    = self.tv_covs[k][j][i][0,0]**2@(1+(self.tv_means[k][j][i,0]-self.z_dv[i+1, 0])**2/self.tv_covs[k][j][i][0,0]**2)+\
-                                self.tv_covs[k][j][i][1,1]**2@(1+(self.tv_means[k][j][i,1]-self.z_dv[i+1, 1])**2/self.tv_covs[k][j][i][1,1]**2)-self.D_MIN_SQ
+                    mu_oac    = self.eig_tv_oa[k][j][i][0]@(1+(self.P_tv_oa[k][j][i][0,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)+\
+                                self.eig_tv_oa[k][j][i][1]@(1+(self.P_tv_oa[k][j][i][1,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)
 
-                    sigma_oac = self.tv_covs[k][j][i][0,0]**4@(1+2*(self.tv_means[k][j][i,0]-self.z_dv[i+1, 0])**2/self.tv_covs[k][j][i][0,0]**2)+\
-                                self.tv_covs[k][j][i][1,1]**4@(1+2*(self.tv_means[k][j][i,1]-self.z_dv[i+1, 1])**2/self.tv_covs[k][j][i][1,1]**2)
+                    sigma_oac = self.eig_tv_oa[k][j][i][0]**2@(1+2*(self.P_tv_oa[k][j][i][0,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)+\
+                                self.eig_tv_oa[k][j][i][1]**2@(1+2*(self.P_tv_oa[k][j][i][0,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)
 
                     # VP NECESSARY CONDITION INEQUALITY
                     self.opti.subject_to( mu_oac -np.sqrt(5/3)*casadi.sqrt(sigma_oac) >= -self.sl_obst_dv[i] )
@@ -472,19 +483,31 @@ class BLSMPCAgent(object):
     def _update_previous_input(self, acc_prev, df_prev):
         self.opti.set_value(self.u_prev, [acc_prev, df_prev])
 
-    def _update_obstacles(self, tv_means, tv_covs):
+    def _update_obstacles(self, tv_means, tv_covs, Q_tv):
         assert len(tv_means) == self.NUM_TVS
         for k in range(self.NUM_TVS):
             for j in range(self.N_modes):
                 self.opti.set_value(self.tv_means[k][j], tv_means[k][j,:,:])
                 for i in range(self.N_PRED_TV):
-                    self.opti.set_value(self.tv_covs[k][j][i], tv_covs[k][j][i])
+                    if i == self.N_PRED_TV-1:
+                        sqrt_sigma=sqrtm(tv_covs[k][j][i])
+                        w, v= np.linalg.eigh(sqrt_sigma@Q_tv[k][j][i-1]@sqrt_sigma)
+                        sqrt_sigma_inv=np.linalg.inv(sqrt_sigma)
+                        self.opti.set_value(self.P_tv_oa[k][j][i], v@sqrt_sigma_inv)
+                        self.opti.set_value(self.eig_tv_oa[k][j][i], w)
+                    else:
+                        sqrt_sigma=sqrtm(tv_covs[k][j][i])
+                        w, v= np.linalg.eigh(sqrt_sigma@Q_tv[k][j][i]@sqrt_sigma)
+                        sqrt_sigma_inv=np.linalg.inv(sqrt_sigma)
+                        self.opti.set_value(self.P_tv_oa[k][j][i], v@sqrt_sigma_inv)
+                        self.opti.set_value(self.eig_tv_oa[k][j][i], w)
+
 
     def _update(self, update_dict):
         self._update_initial_condition( *[update_dict[key] for key in ['x0', 'y0', 'psi0', 'v0']] )
         self._update_reference( *[update_dict[key] for key in ['x_ref', 'y_ref', 'psi_ref', 'v_ref']] )
         self._update_previous_input( *[update_dict[key] for key in ['acc_prev', 'df_prev']] )
-        self._update_obstacles( update_dict['mus'], update_dict['sigmas'])
+        self._update_obstacles( update_dict['mus'], update_dict['sigmas'], update_dict['tv_shapes'])
 
         if 'warm_start' in update_dict.keys():
             # Warm Start used if provided.  Else I believe the problem is solved from scratch with initial values of 0.
@@ -514,8 +537,13 @@ class BLSMPCAgent(object):
             sl_mpc = self.opti.debug.value(self.sl_dv)
             sl_obst_mpc = self.opti.debug.value(self.sl_obst_dv)
             z_ref  = self.opti.debug.value(self.z_ref)
-            u_control=u_mpc[0,:]
-            v_next=z_mpc[1,3]
+            if z_mpc[0,3]> 1:
+                u_control  = np.array([self.a_brake, 0.])
+                v_next      = z_mpc[0,3]+self.DT*self.a_brake
+            else:
+                u_control  = u_mpc[0,:]
+                v_next      = z_mpc[1,3]
+
             # v_next=z_mpc[0,3]+self.DT*self.a_brake
             # tv_refs = [ self.opti.debug.value(self.tv_refs[i]) for i in range(self.NUM_TVS) ]
             is_opt = False

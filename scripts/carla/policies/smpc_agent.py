@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pdb
 from scipy.signal import filtfilt
+
 CARLA_ROOT = os.getenv("CARLA_ROOT")
 if CARLA_ROOT is None:
     raise ValueError("CARLA_ROOT must be defined.")
@@ -34,7 +35,8 @@ class SMPCAgent(object):
                  dt =0.2,
                  N=8,                   # time discretization (s) used to generate a reference
                  N_modes = 3,
-                 smpc_config = "full"
+                 smpc_config = "full",
+                 fps=20
                  ):
         self.vehicle = vehicle
         self.map    = vehicle.get_world().get_map()
@@ -49,6 +51,7 @@ class SMPCAgent(object):
         self._low_level_control = LowLevelControl(vehicle)
         self.time=0
         self.t_ref=0
+        self.fps=fps
         if smpc_config=="full":
             self.ol_flag=False
             self.ns_bl_flag=False
@@ -118,10 +121,10 @@ class SMPCAgent(object):
         # MPC initialization (might take a while....)
         if not self.ol_flag:
             self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
-                                        L_F=self.lf, L_R=self.lr)
+                                        L_F=self.lf, L_R=self.lr, fps=self.fps)
         else:
             self.SMPC=smpc.SMPC_MMPreds_OL(N=self.N, DT=dt, N_modes_MAX=self.N_modes,
-                                          L_F=self.lf, L_R=self.lr)
+                                          L_F=self.lf, L_R=self.lr, fps=self.fps)
 
 
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
@@ -302,6 +305,8 @@ class SMPCAgent(object):
         solve_time=np.nan
 
 
+
+
         self.t_ref=np.argmin(np.linalg.norm(self.feas_ref_states[:,:2]-np.hstack((x,y)), axis=1))
 
 
@@ -313,21 +318,25 @@ class SMPCAgent(object):
 
         else:
             # Run SMPC Preds.
-            if self.time%60==0 and self.time>0 and self.ref_horizon>self.t_ref+1:
+            if self.time%25==0 and self.time>0 and self.ref_horizon>self.t_ref+1:
                 self.reference_regeneration(x,y,psi,speed)
 
             t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
+            N_TV=len(target_vehicle_positions)
+
+            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
+            tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.SMPC.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
+            tv_Q=np.array([[1/(3+self.d_min)**2, 0.],[0., 1/(1+self.d_min)**2]])
+            tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.SMPC.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
+
             # pdb.set_trace()
+
+
             update_dict={  'dx0':x-self.feas_ref_states_new[t_ref_new,0],     'dy0':y-self.feas_ref_states_new[t_ref_new,1],         'dpsi0':psi-self.feas_ref_states_new[t_ref_new,2],       'dv0':speed-self.feas_ref_states_new[t_ref_new,3],
-                          'x_tv0': [target_vehicle_positions[k][0] for k in range(len(target_vehicle_positions))],        'y_tv0': [target_vehicle_positions[k][1] for k in range(len(target_vehicle_positions))],
+                          'x_tv0': [target_vehicle_positions[k][0] for k in range(N_TV)],        'y_tv0': [target_vehicle_positions[k][1] for k in range(N_TV)],
                          'x_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,3].T,
                          'a_ref': self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.SMPC.N,1].T,
-                         'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
-            # update_dict={  'dx0':x-self.feas_ref_states[self.t_ref,0],     'dy0':y-self.feas_ref_states[self.t_ref,1],         'dpsi0':psi-self.feas_ref_states[self.t_ref,2],       'dv0':speed-self.feas_ref_states[self.t_ref,3],
-            #             'x_tv0': [target_vehicle_positions[k][0] for k in range(len(target_vehicle_positions))],        'y_tv0': [target_vehicle_positions[k][1] for k in range(len(target_vehicle_positions))],
-            #            'x_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,0].T,      'y_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,1].T,     'psi_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,2].T,   'v_ref': self.feas_ref_states[self.t_ref:self.t_ref+self.SMPC.N+1,3].T,
-            #            'a_ref': self.feas_ref_inputs[self.t_ref:self.t_ref+self.SMPC.N,0].T,       'df_ref': self.feas_ref_inputs[self.t_ref:self.t_ref+self.SMPC.N,1].T,
-            #            'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1]}
+                         'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices }
 
             if self.ol_flag:
 
@@ -342,7 +351,7 @@ class SMPCAgent(object):
 
             else:
 
-                N_TV=len(target_vehicle_positions)
+
                 t_bar=4
                 i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
                 self.SMPC.update(i, update_dict)
@@ -357,10 +366,12 @@ class SMPCAgent(object):
             u0=self.control_prev
             v_des=v_next
 
+            scaled_distance=np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]]).T@tv_shape_matrices[0][0][0]@np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]])
             print(f"\toptimal?: {is_opt}")
             print(f"\tv_next: {v_next}")
             print(f"\tsteering: {u_control[1]+update_dict['df_ref'][0]}")
             print(f"\tsolve time: {solve_time}")
+            print(f"\t scaled distance_x: {np.sqrt(scaled_distance)}")
             print(self.t_ref, self.time)
 
         control = self._low_level_control.update(speed,      # v_curr
