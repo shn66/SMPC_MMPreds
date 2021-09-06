@@ -46,6 +46,14 @@ def get_metric_dataframe(results_dir):
     return pd.DataFrame(dataframe)
 
 def normalize_by_notv(df):
+    # Compute metrics that involve normalizing by the notv scenario execution.
+    # Right now, these metrics are completion_time and max_lateral_acceleration.
+
+    # Add the new columns with normalized values.
+    df = df.assign( "max_lateral_acceleration_norm" = df.max_lateral_acceleration,
+                    "completion_time_norm" = df.completion_time)
+
+    # Do the normalization per scenario / ego initial condition.
     scene_inits = set( [f"{s}_{i}" for (s,i) in zip(df.scenario, df.initial)])
 
     for scene_init in scene_inits:
@@ -56,41 +64,33 @@ def normalize_by_notv(df):
         if np.sum(notv_inds) != 1:
             raise RuntimeError(f"Unable to find a unique notv execution for scenario {s}, initialization {i}.")
 
-        notv_ind = np.where(notv_inds)[0].item()
+        notv_ind       = np.where(notv_inds)[0].item()
         notv_lat_accel = df.max_lateral_acceleration[notv_ind]
+        notv_time      = df.completion_time[notv_ind]
 
         lat_accel_normalized = df[s_i_inds].max_lateral_acceleration / notv_lat_accel
-        df.loc[s_i_inds, "max_lateral_acceleration"] = lat_accel_normalized
+        df.loc[s_i_inds, "max_lateral_acceleration_norm"] = lat_accel_normalized
 
-        # TODO: maybe we want to remove notv?
-        # df.drop(notv_ind, inplace=True)
-
-    df.rename(columns={"max_lateral_acceleration":
-                       "max_lateral_acceleration_norm"},
-              inplace=True)
+        time_normalized = df[s_i_inds].completion_time / notv_time
+        df.loc[s_i_inds, "completion_time_norm"] = time_normalized
 
     return df
 
 def aggregate(df):
-    # TODO: check we've run all the scenarios we need to first.
-
     df_aggregate = []
 
     for scenario in set(df.scenario):
         for policy in set(df.policy):
             subset_inds = np.logical_and( df.scenario == scenario, df.policy == policy )
-            # TODO: how many subset_inds do we expect there to be?
 
             res = df[subset_inds].mean(numeric_only=True)
-            res.drop(["initial", "scenario"], inplace=True)
+            res.drop(["initial", "scenario", "policy"], inplace=True)
 
             res_dict = {"scenario": int(scenario), "policy": policy}
             res_dict.update(res.to_dict())
             df_aggregate.append(res_dict)
 
     return pd.DataFrame(df_aggregate)
-
-
 
 if __name__ == '__main__':
     results_dir = os.path.join(os.path.abspath(__file__).split('scripts')[0], 'results/')
