@@ -3,7 +3,6 @@ import os
 import sys
 import numpy as np
 
-
 class LowLevelControl:
     def __init__(self, vehicle):
         # Control setup and parameters.
@@ -12,14 +11,13 @@ class LowLevelControl:
         self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
 
         # Throttle Parameters
-        self.k_v  = 0.9  # P gain on velocity tracking error (throttle)
-        self.thr_ff_map  = np.column_stack(([  2.5,  7.5,  12.5,  17.5],
+        self.k_v  = 0.9  # P gain on velocity tracking error
+        self.thr_ff_map  = np.column_stack(([  2.5,  7.5,  12.5,  17.5],        # speed (m/s) -> steady state throttle
                                             [0.325, 0.45, 0.525, 0.625]))
 
         # Brake Parameters
-        self.brake_accel_thresh = -2.0 # m/s^2
-        # TODO: approximated at ~12 m/s, not very accurate...
-        self.brake_decel_map  = np.column_stack(([ 1.6,  3.9, 6.8,  7.1, 7.9],
+        self.brake_accel_thresh = -2.0 # m/s^2, value below which the brake is activated
+        self.brake_decel_map  = np.column_stack(([ 1.6,  3.9, 6.8,  7.1, 7.9],  # deceleration (m/s^2) -> steady state throttle (at 12 m/s^2)
                                                  [  0., 0.25, 0.5, 0.75, 1.0]))
 
     def update(self, v_curr, a_des, v_des, df_des):
