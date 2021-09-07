@@ -69,8 +69,9 @@ class DroneVizParams:
     visualize_opencv      : bool = True # show OpenCV window as the simulation is occuring
     save_avi              : bool = True # whether to save OpenCV visualization as a video
     overlay_gmm           : bool = True # whether to show the confidence ellipses for predicted agents.
-    overlay_ego_info      : bool = True # Add a string with text about ego's state/control.
-    overlay_mode_probs    : bool = True # Add a string with the mode probabilities.
+    overlay_ego_info      : bool = True # add a string with text about ego's state/control.
+    overlay_mode_probs    : bool = True # add a string with the mode probabilities.
+    overlay_traj_hist     : bool = True # add the trajectory history for each agent
 
 @dataclass(frozen=True)
 class VehicleParams:
@@ -264,14 +265,11 @@ class RunIntersectionScenario:
         # Needed for Sync mode loop.
         self.timeout   = carla_params.timeout_period
         self.carla_fps = carla_params.fps
-        self.iter_ctr=0
-        self.max_iters= self.carla_fps*30 # limit scenario run to 30 seconds max
+        self.max_iters = self.carla_fps*30 # limit scenario run to 30 seconds max
 
         # Needed for OpenCV/Carla world visualization.
         self.viz_params = drone_viz_params
         self.mode_rgb_colors = [(255, 0, 255), (255, 255, 0), (0, 255, 255)] # TODO: autogenerate
-        self.mean_box_extent = carla.Vector3D(x=1.5, y=1.5, z=0.2)           # TODO: remove + use ellipses
-        self.box_rotation    = carla.Rotation()                              # TODO: remove + use ellipses
 
     def run_scenario(self):
         # Return flag to indicate if this ran to completion.
@@ -284,16 +282,16 @@ class RunIntersectionScenario:
             writer   = cv2.VideoWriter(avi_name, cv2.VideoWriter_fourcc(*'MJPG'), self.carla_fps, (self.viz_params.img_width, self.viz_params.img_height))
 
         # Data Logging Setup
-        results_dict = {}
+        self.results_dict = {}
         for ind_vehicle, vehicle in enumerate(self.vehicle_actors):
             key = f"{vehicle.attributes['role_name']}_{ind_vehicle}"
             l_f, l_r = vehicle_name_to_lf_lr(vehicle.type_id) # e.g. "vehicle.audi.tt"
-            results_dict[key] = {"l_f"              : l_f,
-                                 "l_r"              : l_r,
-                                 "state_trajectory" : [],
-                                 "input_trajectory" : [],
-                                 "feasibility"      : [],
-                                 "solve_times"      : []}
+            self.results_dict[key] = {"l_f"              : l_f,
+                                      "l_r"              : l_r,
+                                      "state_trajectory" : [],
+                                      "input_trajectory" : [],
+                                      "feasibility"      : [],
+                                      "solve_times"      : []}
 
         try:
             with CarlaSyncMode(self.world, self.drone, fps=self.carla_fps) as sync_mode:
@@ -310,9 +308,8 @@ class RunIntersectionScenario:
                 for _ in range(2):
                     sync_mode.tick(timeout=self.timeout)
 
-                # Loop until all vehicles have reached their goal.
-                completed = False
-                while not completed:
+                # Loop until all vehicles have reached their goal or we've exceeded self.max_iters.
+                for _ in range(self.max_iters):
                     snap, img = sync_mode.tick(timeout=self.timeout)
 
                     # Handle predictions.
@@ -323,19 +320,19 @@ class RunIntersectionScenario:
                     # Run policies for each agent.
                     t_elapsed = snap.elapsed_seconds
                     completed = True
-                    for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
 
+                    for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
                         control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict)
                         if not policy.done():
                             z0 = np.append(t_elapsed, z0) # add the Carla timestamp
                             act_key = f"{act.attributes['role_name']}_{idx_act}"
-                            results_dict[act_key]["state_trajectory"].append(z0)
-                            results_dict[act_key]["input_trajectory"].append(u0)
-                            results_dict[act_key]["feasibility"].append(is_feasible)
-                            results_dict[act_key]["solve_times"].append(solve_time)
+                            self.results_dict[act_key]["state_trajectory"].append(z0)
+                            self.results_dict[act_key]["input_trajectory"].append(u0)
+                            self.results_dict[act_key]["feasibility"].append(is_feasible)
+                            self.results_dict[act_key]["solve_times"].append(solve_time)
 
                         # true at the end of the loop only if all agents are done or if iter_ctr>=max_iters
-                        completed = completed and (policy.done() or self.iter_ctr>=self.max_iters)
+                        completed = completed and policy.done()
                         act.apply_control(control)
 
                         if idx_act == self.ego_vehicle_idx:
@@ -344,7 +341,6 @@ class RunIntersectionScenario:
                             ego_speed = np.linalg.norm([ego_vel.x, ego_vel.y])
                             ego_ctrl  = control
 
-                    self.iter_ctr+=1
                     # Get drone camera image.
                     img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)
                     img_drone = np.reshape(img_drone, (img.height, img.width, 4))
@@ -358,17 +354,10 @@ class RunIntersectionScenario:
 
                     if self.viz_params.overlay_gmm:
                         if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
-                            # Note: we reverse mode_dists and colors s.t. least probable mode is plotted first.
-                            zip_obj = zip( reversed((tvs_mode_dists[0][0])), reversed(self.mode_rgb_colors) )
-                            for mean_traj, color in zip_obj:
-                                for mean_pos in mean_traj:
-                                    # TODO: make these ellipses instead.
-                                    loc = carla.Location(x= float(mean_pos[0]),
-                                                         y=-float(mean_pos[1]),
-                                                         z= float(0.2))
-                                    # TODO: adjust to circumscribing boxes.
-                                    carla_box = carla.BoundingBox(loc, self.mean_box_extent)
-                                    self.world.debug.draw_box(carla_box, self.box_rotation, color=carla.Color(*color), life_time= 1.0/float(self.carla_fps) )
+                            self._viz_gmm(img_drone, tvs_mode_dists)
+
+                    if self.viz_params.overlay_traj_hist:
+                        self._viz_traj_hist(img_drone)
 
                     if self.viz_params.overlay_mode_probs:
                         if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
@@ -377,6 +366,7 @@ class RunIntersectionScenario:
                                 cv2.putText(img_drone, f"{mode_prob:.3f}",
                                             (360 + prob_idx * 100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, self.mode_rgb_colors[prob_idx], 2)
 
+
                     # Handle visualization / saving to video.
                     if self.viz_params.visualize_opencv:
                         cv2.imshow("Drone", img_drone); cv2.waitKey(1)
@@ -384,15 +374,19 @@ class RunIntersectionScenario:
                     if self.viz_params.save_avi:
                         writer.write(img_drone)
 
+                    if completed:
+                        # All cars reached their destinations, end before self.max_iters.
+                        break
+
                 # Save results and mark successful completion.
-                for act_key in results_dict:
+                for act_key in self.results_dict:
                     for arr_key in ["state_trajectory",
                                     "input_trajectory",
                                     "feasibility",
                                     "solve_times"]:
-                        results_dict[act_key][arr_key] = np.array(results_dict[act_key][arr_key])
+                        self.results_dict[act_key][arr_key] = np.array(self.results_dict[act_key][arr_key])
                 pkl_name = os.path.join(self.savedir, "scenario_result.pkl")
-                pickle.dump(results_dict, open(pkl_name, "wb"))
+                pickle.dump(self.results_dict, open(pkl_name, "wb"))
                 ran_successfully = True
 
         # Teardown.
@@ -403,7 +397,7 @@ class RunIntersectionScenario:
                 actor.destroy()
             self.drone.destroy()
             cv2.destroyAllWindows()
-            # import pdb; pdb.set_trace()
+
         return ran_successfully
 
     def _make_predictions(self):
@@ -453,6 +447,11 @@ class RunIntersectionScenario:
         bp_library = self.world.get_blueprint_library()
         bp_drone  = bp_library.find('sensor.camera.rgb')
 
+        # TODO: compute these, hardcoded for now.
+        self.A_world_to_drone = np.array([[    0., -19.2],
+                                          [-19.2,      0.]])
+        self.b_world_to_drone = np.array([ 960., 1116.])
+
         # This is like a top down view of the intersection.  Can tune later.
         cam_loc = carla.Location(x=drone_viz_params.x,
                                  y=drone_viz_params.y,
@@ -475,8 +474,9 @@ class RunIntersectionScenario:
         intersection = load_intersection(intersection_fname)
         bp_library = self.world.get_blueprint_library()
 
-        self.vehicle_actors = []
+        self.vehicle_actors   = []
         self.vehicle_policies = []
+        self.vehicle_colors   = []
         self.vehicle_init_speeds = []
         ego_vehicle_idxs  = []
         tv_vehicle_idxs   = []
@@ -485,6 +485,7 @@ class RunIntersectionScenario:
             veh_bp = bp_library.find(vp.vehicle_type)
             veh_bp.set_attribute("color", vp.vehicle_color)
             veh_bp.set_attribute("role_name", vp.role)
+            self.vehicle_colors.append([int(x) for x in vp.vehicle_color.split(", ")])
 
             if vp.role == "ego":
                 ego_vehicle_idxs.append(idx)
@@ -529,5 +530,39 @@ class RunIntersectionScenario:
         zero_traj   = np.column_stack(( np.arange(-1.0, 0.00, 0.2),
                                         np.zeros((5,3))
                                       )).astype(np.float32)
-        self.pred_model.predict_instance( image_raw   = blank_image ,
-                                          past_states = zero_traj)
+        self.pred_model.predict_instance(image_raw   = blank_image,
+                                         past_states = zero_traj)
+
+    def _viz_gmm(self, img, tvs_mode_dists, mdist_sq_thresh=5.991):
+        mus    = tvs_mode_dists[0][0] # N_modes by N by 2
+        sigmas = tvs_mode_dists[1][0] # N_modes by N by 2 by 2
+
+        # Note: we reverse mode_dists and colors s.t. least probable mode is plotted first.
+        zip_obj = zip( reversed(mus), reversed(sigmas), reversed(self.mode_rgb_colors) )
+
+        for mean_traj, covar_traj, color in zip_obj:
+            color = color[::-1] # rgb to bgr
+            for (mean_xy, covar_xy) in zip(mean_traj, covar_traj):
+                mu_px    = self.A_world_to_drone @ mean_xy + self.b_world_to_drone
+                center_x = int(mu_px[0])
+                center_y = int(mu_px[1])
+                covar_px = self.A_world_to_drone @ covar_xy @ self.A_world_to_drone.T
+                evals_px, evecs_px = np.linalg.eig(covar_px)
+
+                length_ax1 = int( np.sqrt(mdist_sq_thresh * evals_px[0]) ) # half the first axis diameter in pixels
+                length_ax2 = int( np.sqrt(mdist_sq_thresh * evals_px[1]) ) # half the second axis diameter in pixels
+                ang_1 = -np.degrees( np.arctan2(evecs_px[1,0], evecs_px[0,0]) ) # -ang since cv2.ellipse uses clockwise angle
+                cv2.ellipse( img, (center_x, center_y), (length_ax1, length_ax2), ang_1, 0, 360, color, thickness=2)
+
+    def _viz_traj_hist(self, img, radius=2):
+        for idx_act, (act, act_color) in enumerate(zip(self.vehicle_actors,self.vehicle_colors)):
+            act_key = f"{act.attributes['role_name']}_{idx_act}"
+            act_traj = self.results_dict[act_key]["state_trajectory"]
+            act_color = act_color[::-1] # rgb to bgr
+
+            for act_st in act_traj:
+                act_xy = np.array(act_st[1:3])
+                act_px = self.A_world_to_drone @ act_xy + self.b_world_to_drone
+                center_x = int(act_px[0])
+                center_y = int(act_px[1])
+                cv2.circle(img, (center_x, center_y), radius, act_color, thickness=-1)

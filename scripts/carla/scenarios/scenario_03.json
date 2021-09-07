@@ -8,11 +8,12 @@
 	"drone_viz_params" : {
 		"x"                  : 30.0,
 		"y"                  :  0.0,
-		"visualize_opencv"   : false,
+		"visualize_opencv"   : true,
 		"save_avi"           : true,
 		"overlay_gmm"        : true,
 		"overlay_ego_info"   : true,
-		"overlay_mode_probs" : true
+		"overlay_mode_probs" : true,
+		"overlay_traj_hist"  : true
 	},
 	"ego_init_jsons" : [
 		"ego_init_01.json",
@@ -52,7 +53,7 @@
 		{
 			"role"                        : "target",
 			"vehicle_type"                : "vehicle.mercedes-benz.coupe",
-			"vehicle_color"               : "65, 63, 197",
+			"vehicle_color"               : "186, 0, 0",
 			"policy_type"                 : "mpc",
 			"intersection_start_node_idx" :     2,
 			"intersection_goal_node_idx"  :     1,
@@ -66,7 +67,7 @@
 		{
 			"role"                        : "ego",
 			"vehicle_type"                : "vehicle.mercedes-benz.coupe",
-			"vehicle_color"               : "186, 0, 0",
+			"vehicle_color"               : "0, 128, 0",
 			"intersection_start_node_idx" :    0,
 			"intersection_goal_node_idx"  :    3,
 			"start_left_offset"           :    3.7,
