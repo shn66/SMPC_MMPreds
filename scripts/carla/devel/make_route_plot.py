@@ -13,25 +13,19 @@ scriptdir = CARLA_ROOT + "PythonAPI/"
 sys.path.append(scriptdir)
 from examples.synchronous_mode import CarlaSyncMode
 
-scriptdir = os.path.abspath(__file__).split('scripts')[0] + 'scripts/'
+scriptdir = os.path.abspath(__file__).split('scripts')[0] + 'scripts/carla/'
 sys.path.append(scriptdir)
-from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario,
+from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
 
 def setup_intersection_scenario(scenario_dict, ego_init_dict, savedir):
-	carla_params     = CarlaParams(**scenario_dict["carla_params"])
+    carla_params     = CarlaParams(**scenario_dict["carla_params"])
     drone_viz_params = DroneVizParams(**scenario_dict["drone_viz_params"])
     pred_params      = PredictionParams()
 
     vehicles_params_list = []
 
-    if ego_policy_config == "blsmpc":
-        policy_type   = "blsmpc"
-        policy_config = ""
-    elif ego_policy_config.startswith("smpc"):
-        policy_type = "smpc"
-        policy_config = ego_policy_config.split("smpc_")[-1]
-    else:
-        raise ValueError(f"Invalid ego policy config: {ego_policy_config}")
+    policy_type   = "blsmpc"
+    policy_config = ""
 
     for vp_dict in scenario_dict["vehicle_params"]:
         if vp_dict["role"] == "static":
@@ -56,10 +50,10 @@ def setup_intersection_scenario(scenario_dict, ego_init_dict, savedir):
     return runner
 
 def get_drone_snapshot(runner):
-	img_drone = None
-	with CarlaSyncMode(runner.world, runner.drone, fps=runner.carla_fps) as sync_mode:
-		_, img = sync_mode.tick(timeout=runner.timeout)
-		img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)
+    img_drone = None
+    with CarlaSyncMode(runner.world, runner.drone, fps=runner.carla_fps) as sync_mode:
+        _, img = sync_mode.tick(timeout=runner.timeout)
+        img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)
         img_drone = np.reshape(img_drone, (img.height, img.width, 4))
         img_drone = img_drone[:, :, :3]
         img_drone = cv2.resize(img_drone, (runner.viz_params.img_width, runner.viz_params.img_height), interpolation = cv2.INTER_AREA)
@@ -67,36 +61,45 @@ def get_drone_snapshot(runner):
 
 def overlay_trajectories(img, runner, radius=2):
 
-	for (veh_policy, veh_color) in zip(runner.vehicle_policies, runner.vehicle_colors):
-		veh_color = veh_color[::-1] # RGB to BGR
+    for (veh_policy, veh_color) in zip(runner.vehicle_policies, runner.vehicle_colors):
+        veh_color = veh_color[::-1] # RGB to BGR
 
-		if ~veh_policy.hasattr("reference"):
-			continue
+        try:
+            xy_traj = veh_policy.reference[:, 1:3]
 
-		xy_traj = veh_policy.reference[:, 1:3]
-
-		for xy in xy_traj:
-			px = runner.A_world_to_drone @ xy + runner.b_world_to_drone
-			center_x = int(px[0])
-			center_y = int(px[1])
-			cv2.circle(img, (center_x, center_y), radius, veh_color, thickness=-1)
+            for xy in xy_traj:
+                px = runner.A_world_to_drone @ xy + runner.b_world_to_drone
+                center_x = int(px[0])
+                center_y = int(px[1])
+                cv2.circle(img, (center_x, center_y), radius, veh_color, thickness=-1)
+        except:
+            pass
 
 if __name__ == '__main__':
-	# Change each time.
-	scenario_num  = 1
+    # Change each time.
+    scenario_num  = 1
 
-	# Loading + Setup.
-	scenario_path = os.path.join(scriptdir, f"scenarios/scenarios_{scenario_num:02d}.json")
-	ego_init_path = os.path.join(scriptdir, "scenarios/ego_init_01.json")
+    # Loading + Setup.
+    scenario_path = os.path.join(scriptdir, f"scenarios/scenario_{scenario_num:02d}.json")
+    ego_init_path = os.path.join(scriptdir, "scenarios/ego_init_01.json")
 
-	scenario_dict = json.load(open(scenario_path, "r"))
-	ego_init_dict = json.load(open(ego_init_path, "r"))
+    scenario_dict = json.load(open(scenario_path, "r"))
+    ego_init_dict = json.load(open(ego_init_path, "r"))
     scenario_name = scenario_path.split("/")[-1].split('.json')[0]
     savedir = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results/route_viz/" )
 
-	runner = setup_intersection_scenario(scenario_dict, ego_init_dict, savedir)
-
-	img = get_drone_snapshot(runner)
-	overlay_trajectories(img, runner)
-
-	cv2.imwrite(os.path.join(savedir, f"{scenario_name}_route.png"), img)
+    runner = None
+    try:
+        runner = setup_intersection_scenario(scenario_dict, ego_init_dict, savedir)
+        import pdb; pdb.set_trace()
+        img = get_drone_snapshot(runner)
+        import pdb; pdb.set_trace()
+        overlay_trajectories(img, runner)
+        import pdb; pdb.set_trace()
+        cv2.imwrite(os.path.join(savedir, f"{scenario_name}_route.png"), img)
+    finally:
+        if runner:
+            for actor in runner.vehicle_actors:
+                actor.destroy()
+            runner.drone.destroy()
+        cv2.destroyAllWindows()
