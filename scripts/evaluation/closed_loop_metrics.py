@@ -95,10 +95,9 @@ def feasibility_percent(cl_traj : ClosedLoopTrajectory) -> float:
 def get_average_solve_time(cl_traj : ClosedLoopTrajectory) -> float:
 	return np.nanmean( cl_traj.solve_times ) # ignore infeasible cases
 
-def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
-	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
-
-	dmins_tv = [] # dmin (m) where list index corresponds to cl_trajs_tv
+def get_distances_to_TV(cl_traj_ego : ClosedLoopTrajectory,
+	                    cl_traj_tvs : List[ClosedLoopTrajectory]) -> List[np.ndarray]:
+	dist_trajs_TV = [] # each index is a different target vehicle, array {t, d(EV, TV_i)}
 
 	def interp_traj(t_range, state_traj):
 		x_interp = np.interp(t_range, state_traj[:,0], state_traj[:, 1])
@@ -118,9 +117,19 @@ def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
 		positions_tv  = interp_traj(t_range, cl_traj_tv.state_trajectory)
 
 		dists_ego_tv  = np.linalg.norm(positions_ego - positions_tv, axis=-1)
-		dmins_tv.append( np.amin(dists_ego_tv) )
 
-	return dmins_tv
+		dist_traj = np.column_stack((t_range, dists_ego_tv))
+		dist_trajs_TV.append(dist_traj)
+
+	return dist_trajs_TV
+
+def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
+	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
+
+	dist_trajs_TV = get_distances_to_TV(cl_traj_ego, cl_traj_tvs)
+	dmin_per_TV   = [np.amin(dists) for dists in dist_trajs_TV]
+
+	return dmin_per_TV
 
 """
 Main class to hold scenario data and compute metrics.
@@ -156,6 +165,32 @@ class ScenarioResult:
 		d_H = max(directed_hausdorff(xy_self, xy_other)[0],
 			      directed_hausdorff(xy_other, xy_self)[0])
 		return d_H
+
+	def compute_ego_frenet_projection(self, sc_frenet_ref : ScenarioResult) -> np.ndarray:
+		xy_self   = self.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
+		yaw_self  = self.ego_closed_loop_trajectory.state_trajectory[:, 3]
+
+		xy_other  = sc_frenet_ref.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
+		yaw_other   = sc_frenet_ref.ego_closed_loop_trajectory.state_trajectory[:, 3]
+		diff_xy   = np.diff(xy_other, axis=0)
+		s_other   = np.cumsum( np.sqrt( np.sum( np.square(diff_xy), axis=1) ) )
+		s_other   = np.insert( s_other, 0, [0.0] )
+
+		frenet_ref = fth.FrenetTrajectoryHandler(s_other, xy_other, yaw_other)
+
+		s_self  = []
+		ey_self = []
+		epsi_self = []
+
+		for (xy, yaw) in zip(xy_self, yaw_self):
+			x, y = xy
+			s, ey, epsi = frenet_ref.convert_global_to_frenet_frame(x,y,psi)
+
+			s_self.append(s)
+			ey_self.append(ey)
+			epsi_self.append(epsi)
+
+		return np.array(s_self), np.array(ey_self), np.array(epsi_self)
 
 def load_scenario_result(pkl_path):
     scenario_dict = pickle.load(open(pkl_path, "rb"))

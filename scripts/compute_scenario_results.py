@@ -45,6 +45,34 @@ def get_metric_dataframe(results_dir):
 
     return pd.DataFrame(dataframe)
 
+def make_trajectory_viz_plot(results_dir):
+    scenario_dirs = sorted(glob.glob(results_dir + "*scenario*"))
+
+    if len(scenario_dirs) == 0:
+        raise ValueError(f"Could not detect scenario results in directory: {results_dir}")
+
+    # Assumption: format is *scenario_<scene_num>_ego_init_<init_num>_policy
+    dataframe = []
+    for scenario_dir in scenario_dirs:
+        scene_num = int( scenario_dir.split("scenario_")[-1].split("_")[0] )
+        init_num  = int( scenario_dir.split("ego_init_")[-1].split("_")[0])
+        policy    = re.split("ego_init_[0-9]*_", scenario_dir)[-1]
+
+        pkl_path = os.path.join(scenario_dir, "scenario_result.pkl")
+        if not os.path.exists(pkl_path):
+            raise RuntimeError(f"Unable to find a scenario_result.pkl in directory: {scenario_dir}")
+
+        notv_pkl_path = os.path.join(re.split(f"{policy}", scenario_dir)[0] + "notv", "scenario_result.pkl")
+        if not os.path.exists(notv_pkl_path):
+            raise RuntimeError(f"Unable to find a notv scenario_result.pkl in location: {notv_pkl_path}")
+
+        # Load scenario dict for this policy and the notv case (for Hausdorff distance).
+        sr      = load_scenario_result(pkl_path)
+        notv_sr = load_scenario_result(notv_pkl_path)
+
+        s_wrt_notv, ey_wrt_notv, epsi_wrt_notv = sr.compute_ego_frenet_projection(notv_sr)
+        # TODO: WIP
+
 def normalize_by_notv(df):
     # Compute metrics that involve normalizing by the notv scenario execution.
     # Right now, these metrics are completion_time and max_lateral_acceleration.
