@@ -4,6 +4,12 @@ import glob
 import numpy as np
 import pandas as pd
 
+import matplotlib
+font = {'weight' : 'normal',
+        'size'   : 14}
+matplotlib.rc('font', **font)
+import matplotlib.pyplot as plt
+
 from evaluation.closed_loop_metrics import ScenarioResult, ClosedLoopTrajectory, load_scenario_result
 
 def get_metric_dataframe(results_dir):
@@ -45,7 +51,7 @@ def get_metric_dataframe(results_dir):
 
     return pd.DataFrame(dataframe)
 
-def make_trajectory_viz_plot(results_dir):
+def make_trajectory_viz_plot(results_dir, color1="r", color2="b"):
     scenario_dirs = sorted(glob.glob(results_dir + "*scenario*"))
 
     if len(scenario_dirs) == 0:
@@ -70,8 +76,40 @@ def make_trajectory_viz_plot(results_dir):
         sr      = load_scenario_result(pkl_path)
         notv_sr = load_scenario_result(notv_pkl_path)
 
-        s_wrt_notv, ey_wrt_notv, epsi_wrt_notv = sr.compute_ego_frenet_projection(notv_sr)
-        # TODO: WIP
+        # Get time vs. frenet projection for this policy's ego trajectory vs the notv case.
+        ts, s_wrt_notv, ey_wrt_notv, epsi_wrt_notv = sr.compute_ego_frenet_projection(notv_sr)
+
+        # Get the closest distance to a TV across all timesteps identified above.
+        d_closest = np.ones(ts.shape) * np.inf
+        d_trajs_TV = sr.get_distances_to_TV()
+
+        for tv_ind in range(len(d_trajs_TV)):
+            t_traj = d_trajs_TV[tv_ind][:,0]
+            d_traj = d_trajs_TV[tv_ind][:,1]
+
+            d_interp = np.interp(ts, t_traj, d_traj, left=np.inf, right=np.inf)
+
+            d_closest = np.minimum(d_interp, d_closest)
+
+        # Make the plots.
+        t0 = sr.ego_closed_loop_trajectory.state_trajectory[0, 0]
+        trel = ts - t0
+        plt.figure()
+        ax1 = plt.gca()
+        ax1.set_xlabel("Time (s)")
+        ax1.set_ylabel("Route Progress (m)", color=color1)
+        ax1.plot(trel[::2], s_wrt_notv[::2], color=color1)
+        ax1.tick_params(axis="y", labelcolor=color1)
+        ax1.set_yticks(np.arange(0., 101., 10.))
+
+        ax2 = ax1.twinx()
+        ax2.set_ylabel("Closest TV distance (m)", color=color2)
+        ax2.plot(trel[::2], d_closest[::2], color=color2)
+        ax2.tick_params(axis="y", labelcolor=color2)
+        ax2.set_yticks(np.arange(0., 51., 5.))
+
+        plt.tight_layout()
+        plt.savefig(f'{scenario_dir}/traj_viz.svg', bbox_inches='tight')
 
 def normalize_by_notv(df):
     # Compute metrics that involve normalizing by the notv scenario execution.
@@ -121,13 +159,19 @@ def aggregate(df):
     return pd.DataFrame(df_aggregate)
 
 if __name__ == '__main__':
+    compute_metrics = False
+    make_traj_viz   = True
     results_dir = os.path.join(os.path.abspath(__file__).split('scripts')[0], 'results/')
 
-    dataframe = get_metric_dataframe(results_dir)
-    dataframe.to_csv(os.path.join(results_dir, "df_full.csv"), sep=",")
+    if compute_metrics:
+        dataframe = get_metric_dataframe(results_dir)
+        dataframe.to_csv(os.path.join(results_dir, "df_full.csv"), sep=",")
 
-    dataframe = normalize_by_notv(dataframe)
-    dataframe.to_csv(os.path.join(results_dir, "df_norm.csv"), sep=",")
+        dataframe = normalize_by_notv(dataframe)
+        dataframe.to_csv(os.path.join(results_dir, "df_norm.csv"), sep=",")
 
-    dataframe  = aggregate(dataframe)
-    dataframe.to_csv(os.path.join(results_dir, "df_final.csv"), sep=",")
+        dataframe  = aggregate(dataframe)
+        dataframe.to_csv(os.path.join(results_dir, "df_final.csv"), sep=",")
+
+    if make_traj_viz:
+        make_trajectory_viz_plot(results_dir)

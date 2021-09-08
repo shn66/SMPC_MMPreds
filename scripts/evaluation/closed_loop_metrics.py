@@ -3,7 +3,13 @@ from dataclasses import dataclass, field
 from typing import List
 import numpy as np
 import pickle
+import os
+import sys
 from scipy.spatial.distance import directed_hausdorff
+
+scriptdir = os.path.abspath(__file__).split('evaluation')[0] + 'carla/'
+sys.path.append(scriptdir)
+from utils.frenet_trajectory_handler import FrenetTrajectoryHandler
 
 """
 Main class to store a closed loop trajectory for analysis.
@@ -104,7 +110,7 @@ def get_distances_to_TV(cl_traj_ego : ClosedLoopTrajectory,
 		y_interp = np.interp(t_range, state_traj[:,0], state_traj[:, 2])
 		return np.column_stack((x_interp, y_interp))
 
-	for cl_traj_tv in cl_trajs_tv:
+	for cl_traj_tv in cl_traj_tvs:
 		# Get the common time interval where the EV and TV are both moving.
 		t_min = max( np.min(cl_traj_tv.state_trajectory[:,0]),
 			         np.min(cl_traj_ego.state_trajectory[:,0]) )
@@ -158,6 +164,10 @@ class ScenarioResult:
 			                                                          self.tv_closed_loop_trajectories)
 		return metric_dict
 
+	def get_distances_to_TV(self) -> List[np.ndarray]:
+		return get_distances_to_TV(self.ego_closed_loop_trajectory, \
+			                       self.tv_closed_loop_trajectories)
+
 	def compute_ego_hausdorff_dist(self, sc_other : ScenarioResult) -> float:
 		xy_self  = self.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
 		xy_other = sc_other.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
@@ -167,6 +177,7 @@ class ScenarioResult:
 		return d_H
 
 	def compute_ego_frenet_projection(self, sc_frenet_ref : ScenarioResult) -> np.ndarray:
+		t_self    = self.ego_closed_loop_trajectory.state_trajectory[:, 0]
 		xy_self   = self.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
 		yaw_self  = self.ego_closed_loop_trajectory.state_trajectory[:, 3]
 
@@ -176,13 +187,13 @@ class ScenarioResult:
 		s_other   = np.cumsum( np.sqrt( np.sum( np.square(diff_xy), axis=1) ) )
 		s_other   = np.insert( s_other, 0, [0.0] )
 
-		frenet_ref = fth.FrenetTrajectoryHandler(s_other, xy_other, yaw_other)
+		frenet_ref = FrenetTrajectoryHandler(s_other, xy_other, yaw_other)
 
 		s_self  = []
 		ey_self = []
 		epsi_self = []
 
-		for (xy, yaw) in zip(xy_self, yaw_self):
+		for (xy, psi) in zip(xy_self, yaw_self):
 			x, y = xy
 			s, ey, epsi = frenet_ref.convert_global_to_frenet_frame(x,y,psi)
 
@@ -190,7 +201,7 @@ class ScenarioResult:
 			ey_self.append(ey)
 			epsi_self.append(epsi)
 
-		return np.array(s_self), np.array(ey_self), np.array(epsi_self)
+		return t_self, np.array(s_self), np.array(ey_self), np.array(epsi_self)
 
 def load_scenario_result(pkl_path):
     scenario_dict = pickle.load(open(pkl_path, "rb"))
