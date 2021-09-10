@@ -51,21 +51,30 @@ class ClosedLoopTrajectory:
 			raise ValueError(f"Expected positive l_f : {self.l_f} and l_r : {self.l_r}")
 
 		# Do the computation of associated states / metadata given constructor arguments.
-		dts = np.diff( self.state_trajectory[:,0] )
+		ts = self.state_trajectory[:,0]
+		xs = self.state_trajectory[:,1]
+		ys = self.state_trajectory[:,2]
+		ps = self.state_trajectory[:,3]
+		vs = self.state_trajectory[:,4]
+
+		accs    = self.input_trajectory[:,0]
+		deltas  = self.input_trajectory[:,1]
+
+		dts = np.diff( ts )
 		if np.any( np.isclose(dts, 0.) ) or np.any( dts < 0 ):
 			raise ValueError(f"Expected only positive dts but encountered zero/negative dt: {np.amin(dts)}")
 
 		object.__setattr__(self, "N", self.state_trajectory.shape[0])
 
-		beta = np.arctan( self.l_r / (self.l_f + self.l_r) * np.tan(self.input_trajectory[:,1]) )
+		beta = np.arctan( self.l_r / (self.l_f + self.l_r) * np.tan(deltas) )
 
 		object.__setattr__(self, "curvature", np.sin(beta) / self.l_r)
 
-		object.__setattr__(self, "lat_accel", self.curvature * np.square(self.state_trajectory[:, -1]))
+		object.__setattr__(self, "lat_accel", self.curvature * np.square(vs))
 
-		long_jerk = np.diff(self.input_trajectory[:,0]) / dts
-		lat_jerk  = np.diff(self.curvature) / dts * np.square(self.state_trajectory[:-1,-1]) + \
-		                2 * self.curvature[:-1] * self.input_trajectory[:-1, 0] * self.state_trajectory[:-1, -1]
+		long_jerk = np.diff(accs) / dts
+		lat_jerk  = np.diff(self.curvature) / dts * np.square(vs[:-1]) + \
+		                2 * self.curvature[:-1] * accs[:-1] * vs[:-1]
 		object.__setattr__(self, "jerk", np.column_stack((long_jerk, lat_jerk)))
 
 	def __str__(self):
@@ -131,10 +140,8 @@ def get_distances_to_TV(cl_traj_ego : ClosedLoopTrajectory,
 
 def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
 	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
-
 	dist_trajs_TV = get_distances_to_TV(cl_traj_ego, cl_trajs_tv)
-	dmin_per_TV   = [np.amin(dists) for dists in dist_trajs_TV]
-
+	dmin_per_TV   = [np.amin(dist_traj[:,1]) for dist_traj in dist_trajs_TV]
 	return dmin_per_TV
 
 """
@@ -151,7 +158,6 @@ class ScenarioResult:
 	# Metric computation
 	def compute_metrics(self) -> dict:
 		metric_dict = {}
-
 		metric_dict["completion_time"]          = time_to_complete(self.ego_closed_loop_trajectory)
 		metric_dict["max_lateral_acceleration"] = max_lateral_acceleration(self.ego_closed_loop_trajectory)
 		metric_dict["max_longitudinal_jerk"]    = max_longitudinal_jerk(self.ego_closed_loop_trajectory)
@@ -171,7 +177,6 @@ class ScenarioResult:
 	def compute_ego_hausdorff_dist(self, sc_other : ScenarioResult) -> float:
 		xy_self  = self.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
 		xy_other = sc_other.ego_closed_loop_trajectory.state_trajectory[:, 1:3]
-
 		d_H = max(directed_hausdorff(xy_self, xy_other)[0],
 			      directed_hausdorff(xy_other, xy_self)[0])
 		return d_H

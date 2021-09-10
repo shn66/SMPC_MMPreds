@@ -160,7 +160,7 @@ def aggregate(df):
 
 if __name__ == '__main__':
     compute_metrics = True
-    make_traj_viz   = False
+    make_traj_viz   = True
     results_dir = os.path.join(os.path.abspath(__file__).split('scripts')[0], 'results/')
 
     if compute_metrics:
