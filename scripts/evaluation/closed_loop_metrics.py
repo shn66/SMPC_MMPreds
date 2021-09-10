@@ -132,7 +132,7 @@ def get_distances_to_TV(cl_traj_ego : ClosedLoopTrajectory,
 def get_min_dist_per_TV(cl_traj_ego : ClosedLoopTrajectory,
 	                    cl_trajs_tv : List[ClosedLoopTrajectory]) -> List[float]:
 
-	dist_trajs_TV = get_distances_to_TV(cl_traj_ego, cl_traj_tvs)
+	dist_trajs_TV = get_distances_to_TV(cl_traj_ego, cl_trajs_tv)
 	dmin_per_TV   = [np.amin(dists) for dists in dist_trajs_TV]
 
 	return dmin_per_TV
