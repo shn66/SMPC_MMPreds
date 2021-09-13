@@ -73,7 +73,7 @@
 			"start_left_offset"           :    0,
 			"goal_left_offset"            :    0,
 			"goal_longitudinal_offset"    : 20.0,
-			"nominal_speed"               : 8.0
+			"nominal_speed"               : 7.0
 		}
 	]
 }
