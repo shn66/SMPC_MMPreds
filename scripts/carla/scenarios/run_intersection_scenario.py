@@ -423,7 +423,7 @@ class RunIntersectionScenario:
                 # Not enough data for predictions to be made.
                 tvs_mode_probs = [ np.ones(self.ego_num_modes) / self.ego_num_modes ]
                 tvs_mode_dists = [[np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes)],
-                                  [np.stack([[np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
+                                  [np.stack([[0.1*np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
                 tvs_valid_pred = [False]
             else:
                 img_tv = self.rasterizer.rasterize(self.agent_history, target_agent_id)
@@ -547,7 +547,7 @@ class RunIntersectionScenario:
                 center_x = int(mu_px[0])
                 center_y = int(mu_px[1])
                 covar_px = self.A_world_to_drone @ covar_xy @ self.A_world_to_drone.T
-                evals_px, evecs_px = np.linalg.eig(covar_px)
+                evals_px, evecs_px = np.linalg.eigh(covar_px)
 
                 length_ax1 = int( np.sqrt(mdist_sq_thresh * evals_px[0]) ) # half the first axis diameter in pixels
                 length_ax2 = int( np.sqrt(mdist_sq_thresh * evals_px[1]) ) # half the second axis diameter in pixels
