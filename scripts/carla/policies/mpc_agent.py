@@ -99,7 +99,7 @@ class MPCAgent(object):
                            'psi0'    : psi,
                            'v0'      : speed}
             update_dict.update( self._get_reference_traj(**update_dict) )
-            update_dict['tv_refs']  = self._get_target_vehicles(x, y)
+            update_dict['tv_refs'], update_dict['tv_Rs']  = self._get_target_vehicles(x, y)
 
             if self.warm_start:
                 update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
@@ -238,6 +238,7 @@ class MPCAgent(object):
 
             x_preds = []
             y_preds = []
+            R_preds = []
 
             for _ in range(self.N_PRED_TV):
                 act_xn = act_x   + act_v * np.cos(act_psi) * self.DT
@@ -246,22 +247,28 @@ class MPCAgent(object):
 
                 x_preds.append(act_xn)
                 y_preds.append(act_yn)
+                R_preds.append(np.array([[np.cos(act_pn), np.sin(act_pn)],[-np.sin(act_pn), np.cos(act_pn)]]))
 
                 act_x   = act_xn
                 act_y   = act_yn
                 act_psi = act_pn
 
-            return np.column_stack((x_preds, y_preds))
+            return np.column_stack((x_preds, y_preds)), R_preds
 
         tv_refs = []
+        Rs =[]
         for idx in range(self.NUM_TVS):
             if idx < len(act_ids_drel_ordered):
                 actor = all_actors.find( act_ids_drel_ordered[idx][0] )
-                tv_refs.append( get_short_term_pred_tv(actor, self.N_PRED_TV) )
+                tv_ref, R = get_short_term_pred_tv(actor, self.N_PRED_TV)
+                tv_refs.append( tv_ref )
+                Rs.append( R)
             else:
                 fake_agent_position = [ego_x + 1000., ego_y + 1000.]
-                tv_refs.append( np.array(self.N_PRED_TV*[fake_agent_position]) )
-        return tv_refs
+                tv_ref = np.array(self.N_PRED_TV*[fake_agent_position])
+                Rs.append([ np.identity(2) ]*self.N_PRED_TV)
+                tv_refs.append( tv_ref )
+        return tv_refs, Rs
 
     ################################################################################################
     ################################ MPC Formulation ###############################################
@@ -269,9 +276,9 @@ class MPCAgent(object):
     def _setup_mpc(self,
                    N          =   10,   # timesteps in MPC Horizon
                    DT         =  0.2,   # discretization time between timesteps (s)
-                   N_PRED_TV  =    4,   # timesteps for target vehicle prediction
+                   N_PRED_TV  =    3,   # timesteps for target vehicle prediction
                    NUM_TVS    =    5,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  12.0,  # square of minimum 2-norm distance to a target vehicle
+                   D_MIN      =  0.5,  # square of minimum 2-norm distance to a target vehicle
                    L_F        =  1.5,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.5,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
@@ -285,8 +292,9 @@ class MPCAgent(object):
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 1000,      # weights for slack on collision avoidance (norm constraint).
-                   Q = [1., 1., 10., 0.1], # weights on x, y, and v.
-                   R = [10., 100.]):
+                   Q = [1., 1., 50., 0.1], # weights on x, y, and v.
+                   R = [100., 1000.],
+                   fps=20):
                    # Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
                    # R = [10., 100.]):       # weights on jerk and slew rate (steering angle derivative)
 
@@ -314,7 +322,7 @@ class MPCAgent(object):
 
         # Collision Avoidance: center positions for each target vehicle (spoofed if not present).
         self.tv_refs = [ self.opti.parameter(self.N_PRED_TV, 2) for _ in range(self.NUM_TVS) ]
-
+        self.tv_Rs   = [ [self.opti.parameter(2,2) for _ in range(self.N_PRED_TV)] for _ in range(self.NUM_TVS) ]
         """ Decision Variables """
         self.z_dv = self.opti.variable(self.N+1, 4)  # solution trajectory starting at timestep 0.
         self.x_dv   = self.z_dv[:, 0]
@@ -331,6 +339,7 @@ class MPCAgent(object):
         self.sl_df_dv  = self.sl_dv[:,1]
 
         self.sl_obst_dv = self.opti.variable(self.N_PRED_TV) # slack variable for obstacle avoidance
+        self.S=casadi.DM([[(3+self.D_MIN)**(-2), 0.],[0., (1+self.D_MIN)**(-2)]])
 
         self._add_agent_constraints()
         self._add_obstacle_avoidance_constraints()
@@ -347,7 +356,8 @@ class MPCAgent(object):
         self._update_previous_input(0., 0.)
 
         tv_refs_fake = [ 1000. * np.ones((self.N_PRED_TV,2)) for _ in range(self.NUM_TVS) ]
-        self._update_obstacles(tv_refs_fake)
+        tv_Rs_fake   =  [[np.identity(2)]*self.N_PRED_TV]*self.NUM_TVS
+        self._update_obstacles(tv_refs_fake, tv_Rs_fake)
 
         self.opti.solver("ipopt", {"expand": False}, {"max_cpu_time": 0.1, "print_level": 0})
 
@@ -378,13 +388,13 @@ class MPCAgent(object):
         self.opti.subject_to( self.opti.bounded(self.DF_MIN, self.df_dv,  self.DF_MAX) )
 
         # Input Rate Bound Constraints
-        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT -  self.sl_acc_dv[0],
+        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.fps**(-1) -  self.sl_acc_dv[0],
                                                  self.acc_dv[0] - self.u_prev[0],
-                                                 self.A_DOT_MAX*self.DT   + self.sl_acc_dv[0]) )
+                                                 self.A_DOT_MAX*self.fps**(-1)   + self.sl_acc_dv[0]) )
 
-        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.DT  -  self.sl_df_dv[0],
+        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.fps**(-1)  -  self.sl_df_dv[0],
                                                  self.df_dv[0] - self.u_prev[1],
-                                                 self.DF_DOT_MAX*self.DT  + self.sl_df_dv[0]) )
+                                                 self.DF_DOT_MAX*self.fps**(-1)  + self.sl_df_dv[0]) )
 
         for i in range(self.N - 1):
             self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT   -  self.sl_acc_dv[i+1],
@@ -402,11 +412,11 @@ class MPCAgent(object):
         return casadi.mtimes(z, casadi.mtimes(Q, z.T))
 
     def _add_obstacle_avoidance_constraints(self):
-        self.opti.subject_to( self.opti.bounded(0, self.sl_obst_dv, self.D_MIN_SQ) )
+        self.opti.subject_to( 0== self.sl_obst_dv )
 
-        for tv_ref in self.tv_refs:
+        for k, tv_ref in enumerate(self.tv_refs):
             for i in range(self.N_PRED_TV):
-                self.opti.subject_to( self.D_MIN_SQ - self.sl_obst_dv[i] <= self._quad_form(self.z_dv[i+1, :2] - tv_ref[i, :], casadi.MX.eye(2)) )
+                self.opti.subject_to( 1.0- self.sl_obst_dv[i] <= self._quad_form(self.z_dv[i+1, :2] - tv_ref[i, :], self.tv_Rs[k][i].T@self.S@self.tv_Rs[k][i] ))
 
     def _add_cost(self):
         cost = 0
@@ -434,16 +444,19 @@ class MPCAgent(object):
     def _update_previous_input(self, acc_prev, df_prev):
         self.opti.set_value(self.u_prev, [acc_prev, df_prev])
 
-    def _update_obstacles(self, tv_refs):
+    def _update_obstacles(self, tv_refs, tv_Rs):
         assert len(tv_refs) == self.NUM_TVS
         for i, tv_ref in enumerate(tv_refs):
             self.opti.set_value(self.tv_refs[i], tv_ref)
+        for k in range(self.NUM_TVS):
+            for j in range(self.N_PRED_TV):
+                self.opti.set_value(self.tv_Rs[k][j], tv_Rs[k][j])
 
     def _update(self, update_dict):
         self._update_initial_condition( *[update_dict[key] for key in ['x0', 'y0', 'psi0', 'v0']] )
         self._update_reference( *[update_dict[key] for key in ['x_ref', 'y_ref', 'psi_ref', 'v_ref']] )
         self._update_previous_input( *[update_dict[key] for key in ['acc_prev', 'df_prev']] )
-        self._update_obstacles( update_dict['tv_refs'] )
+        self._update_obstacles( update_dict['tv_refs'], update_dict['tv_Rs'] )
 
         if 'warm_start' in update_dict.keys():
             # Warm Start used if provided.  Else I believe the problem is solved from scratch with initial values of 0.

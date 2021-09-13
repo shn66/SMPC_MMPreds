@@ -30,7 +30,7 @@ class BLSMPCAgent(object):
                  nominal_speed_mps =8.0, # sets desired speed (m/s) for tracking path
                  dt =0.2,
                  N=8,                   # time discretization (s) used to generate a reference
-                 N_modes = 3):
+                 N_modes = 3, fps= 20):
         self.vehicle = vehicle
         self.world   = vehicle.get_world()
         carla_map     = self.world.get_map()
@@ -50,12 +50,12 @@ class BLSMPCAgent(object):
         self.nominal_speed = nominal_speed_mps # m/s
         self.lat_accel_max = 2.0  # m/s^2
         self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
-        self._setup_mpc(N=N, DT=dt, N_modes=N_modes, L_F=self.lf, L_R=self.lr)
+        self._setup_mpc(N=N, DT=dt, N_modes=N_modes, L_F=self.lf, L_R=self.lr, fps=fps)
 
         self._fit_velocity_profile()
 
         self._low_level_control = LowLevelControl(vehicle)
-
+        self.d_min=2.0
 
 
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
@@ -76,7 +76,7 @@ class BLSMPCAgent(object):
 
         tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(self.NUM_TVS)]
         tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(self.NUM_TVS)]
-        tv_Q=np.diag((6**(-2), 4**(-2)))
+        tv_Q=np.diag(((3.5+self.d_min)**(-2), (1+self.d_min)**(-2)))
         tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(self.NUM_TVS)]
 
 
@@ -116,23 +116,15 @@ class BLSMPCAgent(object):
             update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1], 'tv_shapes': tv_shape_matrices})
             # update_dict['tv_refs']  = self._get_target_vehicles(x, y)
 
-            if self.warm_start:
-                update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
-                update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
-                update_dict['warm_start'] = self.warm_start
-            else:
-                update_dict['acc_prev']  = 0.
-                update_dict['df_prev']   = 0.
+
+            update_dict['acc_prev']  = 0.
+            update_dict['df_prev']   = 0.
 
             self._update(update_dict)
 
             # Solve MPC problem.
             sol_dict = self._solve()
-            if sol_dict['optimal']:
-                self.warm_start = {}
-                self.warm_start['z_ws']       = sol_dict['z_mpc']
-                self.warm_start['u_ws']       = sol_dict['u_mpc']
-                self.warm_start['sl_ws']      = sol_dict['sl_mpc']
+
 
 
             u0=sol_dict['u_control']
@@ -290,10 +282,9 @@ class BLSMPCAgent(object):
     def _setup_mpc(self,
                    N          =   10,   # timesteps in MPC Horizon
                    DT         =  0.2,   # discretization time between timesteps (s)
-                   N_modes    =    2,   # modes for target vehicle prediction
+                   N_modes    =    3,   # modes for target vehicle prediction
                    NUM_TVS    =    1,   # maximum number of target vehicles to avoid
-                   D_MIN_SQ   =  25.0,  # square of minimum 2-norm distance to a target vehicle
-                   RISK       =  0.1,
+                   RISK       =  0.05,
                    L_F        =  1.7213,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.4987,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
@@ -308,7 +299,8 @@ class BLSMPCAgent(object):
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 10000,      # weights for slack on collision avoidance (norm constraint).
                    Q = [100., 100., 500., 0.1], # weights on x, y, and v.
-                   R = [100., 1000.]):
+                   R = [100., 1000.],
+                   fps =20):
                    # Q = [1., 1., 10., 0.1], # weights on x, y, and v.
                    # R = [10, 100.]):       # weights on jerk and slew rate (steering angle derivative)
 
@@ -407,13 +399,13 @@ class BLSMPCAgent(object):
         self.opti.subject_to( self.opti.bounded(self.DF_MIN, self.df_dv,  self.DF_MAX) )
 
         # Input Rate Bound Constraints
-        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT -  self.sl_acc_dv[0],
-                                                 self.acc_dv[0] - self.u_prev[0],
-                                                 self.A_DOT_MAX*self.DT   + self.sl_acc_dv[0]) )
+        self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN -  self.sl_acc_dv[0],
+                                                 (self.acc_dv[0] - self.u_prev[0])*self.fps,
+                                                 self.A_DOT_MAX   + self.sl_acc_dv[0]) )
 
-        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN*self.DT  -  self.sl_df_dv[0],
-                                                 self.df_dv[0] - self.u_prev[1],
-                                                 self.DF_DOT_MAX*self.DT  + self.sl_df_dv[0]) )
+        self.opti.subject_to( self.opti.bounded( self.DF_DOT_MIN  -  self.sl_df_dv[0],
+                                                 (self.df_dv[0] - self.u_prev[1])*self.fps,
+                                                 self.DF_DOT_MAX  + self.sl_df_dv[0]) )
 
         for i in range(self.N - 1):
             self.opti.subject_to( self.opti.bounded( self.A_DOT_MIN*self.DT   -  self.sl_acc_dv[i+1],
@@ -444,7 +436,7 @@ class BLSMPCAgent(object):
                     # Mean and Covariance of a generalized chi^2 distribution
 
                     mu_oac    = self.eig_tv_oa[k][j][i][0]@(1+(self.P_tv_oa[k][j][i][0,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)+\
-                                self.eig_tv_oa[k][j][i][1]@(1+(self.P_tv_oa[k][j][i][1,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)
+                                self.eig_tv_oa[k][j][i][1]@(1+(self.P_tv_oa[k][j][i][1,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)-1.0
 
                     sigma_oac = self.eig_tv_oa[k][j][i][0]**2@(1+2*(self.P_tv_oa[k][j][i][0,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)+\
                                 self.eig_tv_oa[k][j][i][1]**2@(1+2*(self.P_tv_oa[k][j][i][0,:]@(self.tv_means[k][j][i,:]-self.z_dv[i+1, :2]).T)**2)
@@ -490,15 +482,17 @@ class BLSMPCAgent(object):
                 self.opti.set_value(self.tv_means[k][j], tv_means[k][j,:,:])
                 for i in range(self.N_PRED_TV):
                     if i == self.N_PRED_TV-1:
-                        sqrt_sigma=sqrtm(tv_covs[k][j][i])
+                        sig_eval, sig_evec= np.linalg.eigh(tv_covs[k][j][i])
+                        sqrt_sigma=sig_evec@np.diag(np.sqrt(sig_eval))@sig_evec.T
                         w, v= np.linalg.eigh(sqrt_sigma@Q_tv[k][j][i-1]@sqrt_sigma)
-                        sqrt_sigma_inv=np.linalg.inv(sqrt_sigma)
+                        sqrt_sigma_inv=sig_evec@np.diag(np.sqrt(sig_eval)**(-1))@sig_evec.T
                         self.opti.set_value(self.P_tv_oa[k][j][i], v@sqrt_sigma_inv)
                         self.opti.set_value(self.eig_tv_oa[k][j][i], w)
                     else:
-                        sqrt_sigma=sqrtm(tv_covs[k][j][i])
+                        sig_eval, sig_evec= np.linalg.eigh(tv_covs[k][j][i])
+                        sqrt_sigma=sig_evec@np.diag(np.sqrt(sig_eval))@sig_evec.T
                         w, v= np.linalg.eigh(sqrt_sigma@Q_tv[k][j][i]@sqrt_sigma)
-                        sqrt_sigma_inv=np.linalg.inv(sqrt_sigma)
+                        sqrt_sigma_inv=sig_evec@np.diag(np.sqrt(sig_eval)**(-1))@sig_evec.T
                         self.opti.set_value(self.P_tv_oa[k][j][i], v@sqrt_sigma_inv)
                         self.opti.set_value(self.eig_tv_oa[k][j][i], w)
 
@@ -529,32 +523,39 @@ class BLSMPCAgent(object):
             u_control=u_mpc[0,:]
             v_next=z_mpc[1,3]
             # tv_refs = [ sol.value(self.tv_refs[i]) for i in range(self.NUM_TVS) ]
-            is_opt = True
+            is_feas = True
         except:
             # Suboptimal solution (e.g. timed out).
+
             u_mpc  = self.opti.debug.value(self.u_dv)
             z_mpc  = self.opti.debug.value(self.z_dv)
             sl_mpc = self.opti.debug.value(self.sl_dv)
             sl_obst_mpc = self.opti.debug.value(self.sl_obst_dv)
             z_ref  = self.opti.debug.value(self.z_ref)
-            if z_mpc[0,3]> 1:
-                u_control  = np.array([self.a_brake, 0.])
-                v_next      = z_mpc[0,3]+self.DT*self.a_brake
-            else:
+            # import pdb; pdb.set_trace()
+            if self.opti.stats()['return_status']!='Infeasible_Problem_Detected':
                 u_control  = u_mpc[0,:]
                 v_next      = z_mpc[1,3]
+                is_feas=True
+            else:
+                is_feas=False
+                if z_mpc[0,3]> 1:
+                    u_control  = np.array([self.a_brake, 0.])
+                    v_next      = z_mpc[0,3]+self.DT*self.a_brake
+                else:
+                    u_control  = u_mpc[0,:]
+                    v_next      = z_mpc[1,3]
 
             # v_next=z_mpc[0,3]+self.DT*self.a_brake
             # tv_refs = [ self.opti.debug.value(self.tv_refs[i]) for i in range(self.NUM_TVS) ]
-            is_opt = False
 
         solve_time = time.time() - st
 
 
         sol_dict['u_control']   = u_control  # control input to apply based on solution
-        sol_dict['optimal']     = is_opt      # whether the solution is optimal or not
+        sol_dict['optimal']     = is_feas      # whether the solution is optimal or not
         sol_dict['v_next']      = v_next
-        if not is_opt:
+        if not is_feas:
             sol_dict['solve_time'] = np.nan  # how long the solver took in seconds
         else:
             sol_dict['solve_time'] = self.opti.stats()["t_wall_total"]  # how long the solver took in seconds
