@@ -9,7 +9,8 @@
 *.png
 log/*/
 log/*.*
-*.csv
+*.csv*
+results/*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -159,7 +159,7 @@ def aggregate(df):
     return pd.DataFrame(df_aggregate)
 
 if __name__ == '__main__':
-    compute_metrics = False
+    compute_metrics = True
     make_traj_viz   = True
     results_dir = os.path.join(os.path.abspath(__file__).split('scripts')[0], 'results/')
 
