@@ -114,16 +114,26 @@ class BLSMPCAgent(object):
 
             update_dict.update( self._get_reference_traj(**update_dict) )
             update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1], 'tv_shapes': tv_shape_matrices})
-            # update_dict['tv_refs']  = self._get_target_vehicles(x, y)
 
 
-            update_dict['acc_prev']  = 0.
-            update_dict['df_prev']   = 0.
+
+            if self.warm_start:
+                update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
+                update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
+                update_dict['warm_start'] = self.warm_start
+            else:
+                update_dict['acc_prev']  = 0.
+                update_dict['df_prev']   = 0.
 
             self._update(update_dict)
 
             # Solve MPC problem.
             sol_dict = self._solve()
+            if sol_dict['optimal']:
+                self.warm_start = {}
+                self.warm_start['z_ws']       = sol_dict['z_mpc']
+                self.warm_start['u_ws']       = sol_dict['u_mpc']
+                self.warm_start['sl_ws']      = sol_dict['sl_mpc']
 
 
 
@@ -142,28 +152,6 @@ class BLSMPCAgent(object):
                                                   v_des, # v_des
                                                   u0[1]) # df_des
 
-        # if self.counter % 10 == 0:
-        #     plt.subplot(311)
-        #     plt.plot(-sol_dict['z_ref'][:,1], sol_dict['z_ref'][:,0], 'kx')
-        #     plt.plot(-sol_dict['z_mpc'][:,1], sol_dict['z_mpc'][:,0], 'r')
-
-        #     for tv_ref in sol_dict['tv_refs']:
-        #         plt.plot(-tv_ref[:,1], tv_ref[:,0], 'b')
-        #     plt.ylim([0,50]); plt.xlim([-150, 150])
-
-        #     plt.xlabel('y'); plt.ylabel('x')
-
-        #     plt.subplot(312)
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 2], 'kx')
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 2], 'r')
-
-        #     plt.subplot(313)
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_ref'][:, 3], 'kx')
-        #     plt.plot(np.array([x*self.DT for x in range(1, self.N+1)]), sol_dict['z_mpc'][1:, 3], 'r')
-
-        #     plt.suptitle(f"ACC:{sol_dict['u_mpc'][0,0]}, V:{sol_dict['z_mpc'][1,3]}, ST:{sol_dict['u_mpc'][0,1]}")
-
-        #     plt.show()
 
 
         return control, z0, u0, is_opt, solve_time
@@ -214,67 +202,6 @@ class BLSMPCAgent(object):
 
         return ref_dict
 
-    # def _get_target_vehicles(self, ego_x, ego_y):
-    #     all_actors = self.world.get_actors()
-    #     veh_actors = all_actors.filter('vehicle*')
-    #     ped_actors = all_actors.filter('walker*')
-
-    #     def get_drel(actor):
-    #         act_loc = actor.get_location()
-    #         act_x, act_y = act_loc.x, -act_loc.y
-
-    #         return ((act_x - ego_x)**2 + (act_y - ego_y)**2)**0.5
-
-    #     act_id_drel_map = {} # TODO: consider relative velocity.
-
-    #     for veh_act in veh_actors:
-    #         if self.vehicle.id == veh_act.id:
-    #             continue
-    #         act_id_drel_map[veh_act.id] = get_drel(veh_act)
-
-    #     for ped_act in ped_actors:
-    #         act_id_drel_map[ped_act.id] = get_drel(ped_act)
-
-    #     # Filter by proximity (TODO: improve this).
-    #     act_ids_drel_ordered = sorted(act_id_drel_map.items(), key=lambda x:x[1])
-
-    #     def get_short_term_pred_tv(actor, N):
-    #         act_loc    = actor.get_location()
-    #         act_vel    = actor.get_velocity()
-    #         act_angvel = actor.get_angular_velocity()
-    #         act_tf     = actor.get_transform()
-
-    #         act_x, act_y =  act_loc.x, -act_loc.y
-    #         act_psi      = -fth.fix_angle(np.radians(act_tf.rotation.yaw))
-    #         act_v        =  act_vel.x * np.cos(act_psi) - act_vel.y * np.sin(act_psi)
-    #         act_w        = -np.radians(act_angvel.z)
-
-    #         x_preds = []
-    #         y_preds = []
-
-    #         for _ in range(self.N_PRED_TV):
-    #             act_xn = act_x   + act_v * np.cos(act_psi) * self.DT
-    #             act_yn = act_y   + act_v * np.sin(act_psi) * self.DT
-    #             act_pn = act_psi + act_w * self.DT
-
-    #             x_preds.append(act_xn)
-    #             y_preds.append(act_yn)
-
-    #             act_x   = act_xn
-    #             act_y   = act_yn
-    #             act_psi = act_pn
-
-    #         return np.column_stack((x_preds, y_preds))
-
-    #     tv_refs = []
-    #     for idx in range(self.NUM_TVS):
-    #         if idx < len(act_ids_drel_ordered):
-    #             actor = all_actors.find( act_ids_drel_ordered[idx][0] )
-    #             tv_refs.append( get_short_term_pred_tv(actor, self.N_PRED_TV) )
-    #         else:
-    #             fake_agent_position = [ego_x + 1000., ego_y + 1000.]
-    #             tv_refs.append( np.array(self.N_PRED_TV*[fake_agent_position]) )
-    #     return tv_refs
 
     ################################################################################################
     ################################ MPC Formulation ###############################################
@@ -284,7 +211,7 @@ class BLSMPCAgent(object):
                    DT         =  0.2,   # discretization time between timesteps (s)
                    N_modes    =    3,   # modes for target vehicle prediction
                    NUM_TVS    =    1,   # maximum number of target vehicles to avoid
-                   RISK       =  0.05,
+                   RISK       =  0.5,#0.05,
                    L_F        =  1.7213,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.4987,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
@@ -299,10 +226,9 @@ class BLSMPCAgent(object):
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 10000,      # weights for slack on collision avoidance (norm constraint).
                    Q = [100., 100., 500., 0.1], # weights on x, y, and v.
-                   R = [100., 1000.],
+                   R = [100., 1000.],           # weights on jerk and slew rate (steering angle derivative)
                    fps =20):
-                   # Q = [1., 1., 10., 0.1], # weights on x, y, and v.
-                   # R = [10, 100.]):       # weights on jerk and slew rate (steering angle derivative)
+
 
         for key in list(locals()):
             if key == 'self':
@@ -329,11 +255,10 @@ class BLSMPCAgent(object):
 
         # Collision Avoidance: mean, variance per mode for each target vehicle (spoofed if not present) along horizon.
         self.tv_means = [ [ self.opti.parameter(self.N_PRED_TV, 2) for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
-        # self.tv_covs   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
-        # self.tv_covs_sqrt   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
-        # self.Q_tv   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+
         self.P_tv_oa   = [ [ [ self.opti.parameter(2, 2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
         self.eig_tv_oa   = [ [ [ self.opti.parameter(2) for _ in range(self.N_PRED_TV) ] for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
+
         """ Decision Variables """
         self.z_dv = self.opti.variable(self.N+1, 4)  # solution trajectory starting at timestep 0.
         self.x_dv   = self.z_dv[:, 0]

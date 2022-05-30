@@ -94,7 +94,7 @@ class VehicleParams:
     # General MPC parameters.  Some of these can be ignored (e.g. n_modes if using MPCAgent).
     N         : int   = 10  # horizon of the MPC solution
     dt        : float = 0.2 # timestep of the discretization used (s)
-    num_modes : int   = 3   # number of GMM modes considered by MPC (prioritizing most probable ones first)
+    num_modes : int   = 1   # number of GMM modes considered by MPC (prioritizing most probable ones first)
 
     # SMPC specific parameters (ignored for any other policy_type).
     smpc_config : str = "full" # "full", "open_loop", "no_switch"
@@ -145,12 +145,30 @@ def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
                         N_modes=vehicle_params.num_modes,
                         nominal_speed_mps=vehicle_params.nominal_speed)
     elif vehicle_params.policy_type == "smpc":
-        return SMPCAgent(vehicle_actor, goal_transform.location, \
-                        N=vehicle_params.N,
-                        dt=vehicle_params.dt,
-                        N_modes=vehicle_params.num_modes,
-                        nominal_speed_mps=vehicle_params.nominal_speed,
-                        smpc_config=vehicle_params.smpc_config)
+        if vehicle_params.smpc_config.endswith("OAinner"):
+            return SMPCAgent(vehicle_actor, goal_transform.location, \
+                            N=vehicle_params.N,
+                            dt=vehicle_params.dt,
+                            N_modes=vehicle_params.num_modes,
+                            nominal_speed_mps=vehicle_params.nominal_speed,
+                            smpc_config=vehicle_params.smpc_config.split("_OAinner")[0],
+                            OAIA=True)
+        elif vehicle_params.smpc_config.endswith("obca"):
+            return SMPCAgent(vehicle_actor, goal_transform.location, \
+                            N=vehicle_params.N,
+                            dt=vehicle_params.dt,
+                            N_modes=vehicle_params.num_modes,
+                            nominal_speed_mps=vehicle_params.nominal_speed,
+                            smpc_config=vehicle_params.smpc_config.split("_obca")[0][:-2],
+                            obca=True,
+                            obca_mode=int(vehicle_params.smpc_config.split("_obca")[0][-1]))
+        else :
+            return SMPCAgent(vehicle_actor, goal_transform.location, \
+                            N=vehicle_params.N,
+                            dt=vehicle_params.dt,
+                            N_modes=vehicle_params.num_modes,
+                            nominal_speed_mps=vehicle_params.nominal_speed,
+                            smpc_config=vehicle_params.smpc_config)
     else:
         raise ValueError(f"Unsupported policy type: {vehicle_params.policy_type}")
 
@@ -538,7 +556,8 @@ class RunIntersectionScenario:
         sigmas = tvs_mode_dists[1][0] # N_modes by N by 2 by 2
 
         # Note: we reverse mode_dists and colors s.t. least probable mode is plotted first.
-        zip_obj = zip( reversed(mus), reversed(sigmas), reversed(self.mode_rgb_colors) )
+        # zip_obj = zip( reversed(mus), reversed(sigmas), reversed(self.mode_rgb_colors) )
+        zip_obj = zip( mus, sigmas, self.mode_rgb_colors )
 
         for mean_traj, covar_traj, color in zip_obj:
             color = color[::-1] # rgb to bgr

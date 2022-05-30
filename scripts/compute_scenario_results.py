@@ -3,7 +3,7 @@ import re
 import glob
 import numpy as np
 import pandas as pd
-
+import pdb
 import matplotlib
 font = {'weight' : 'normal',
         'size'   : 14}
@@ -21,6 +21,7 @@ def get_metric_dataframe(results_dir):
     # Assumption: format is *scenario_<scene_num>_ego_init_<init_num>_policy
     dataframe = []
     for scenario_dir in scenario_dirs:
+        # pdb.set_trace()
         scene_num = int( scenario_dir.split("scenario_")[-1].split("_")[0] )
         init_num  = int( scenario_dir.split("ego_init_")[-1].split("_")[0])
         policy    = re.split("ego_init_[0-9]*_", scenario_dir)[-1]
@@ -160,7 +161,7 @@ def aggregate(df):
 
 if __name__ == '__main__':
     compute_metrics = True
-    make_traj_viz   = True
+    make_traj_viz   = False
     results_dir = os.path.join(os.path.abspath(__file__).split('scripts')[0], 'results/')
 
     if compute_metrics:

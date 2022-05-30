@@ -37,6 +37,9 @@ class SMPCAgent(object):
                  N=8,                   # time discretization (s) used to generate a reference
                  N_modes = 3,
                  smpc_config = "full",
+                 OAIA=False,
+                 obca=False,
+                 obca_mode=2,
                  fps=20
                  ):
         self.vehicle = vehicle
@@ -54,6 +57,12 @@ class SMPCAgent(object):
         self.t_ref=0
         self.fps=fps
         self.d_min=2.0
+
+        self.OA_inner_approx=OAIA
+
+        self.obca_flag=obca
+        self.obca_mode=obca_mode
+
         if smpc_config=="full":
             self.ol_flag=False
             self.ns_bl_flag=False
@@ -63,36 +72,23 @@ class SMPCAgent(object):
         elif smpc_config=="no_switch":
             self.ol_flag=False
             self.ns_bl_flag=True
+
         else:
             raise ValueError(f"Invalid SMPC config: {smpc_config}")
 
-        # Get the high-level route using Carla's API (basically A* search over road segments).
-        # init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
-        # goal          = self.map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
-        # route = self.planner.trace_route(init_waypoint.transform.location, goal.transform.location)
 
-        # # Convert the high-level route into a path parametrized by arclength distance s (i.e. Frenet frame).
-        # # Generate a refernece by fitting a velocity profile with specified nominal speed and time discretization.
-        # way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
-        # self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
-        # self.nominal_speed = nominal_speed_mps
-        # self.lat_accel_max = 3.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
-        # self.dt = dt
-        # self.fit_velocity_profile()
 
-        # # Feasible reference generation by nonlinear trajectory optimization
-        # self.feas_ref_gen=smpc.RefTrajGenerator(N=self.ref_horizon, DT=dt)
-        # self.feas_ref_gen.update(self.ref_dict)
-        # self.feas_ref_dict=self.feas_ref_gen.solve()
-        # self.feas_ref_states=self.feas_ref_dict['z_opt']
-        # self.feas_ref_inputs=self.feas_ref_dict['u_opt']
+
 
         self.control_prev = np.zeros((2,1))
         self.prev_opt=False
         self.prev_nom_inputs=[]
         self.reference_regeneration()
 
-        # Debugging: see the reference solution.
+        self.warm_start={}
+
+        ## Debugging: see the reference solution.
+
         # plt.subplot(411)
         # # import pdb; pdb.set_trace()
         # plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
@@ -121,11 +117,14 @@ class SMPCAgent(object):
         # plt.ylabel('df')
         # plt.show()
 
-        # pdb.set_trace()
         # MPC initialization (might take a while....)
         if not self.ol_flag:
-            self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
+            if not self.obca_flag:
+                self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
                                         L_F=self.lf, L_R=self.lr, fps=self.fps)
+            else:
+                self.SMPC=smpc.SMPC_MMPreds_OBCA(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
+                                        L_F=self.lf, L_R=self.lr, fps=self.fps, pol_mode=self.obca_mode)
         else:
             self.SMPC=smpc.SMPC_MMPreds_OL(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes,
                                           L_F=self.lf, L_R=self.lr, fps=self.fps)
@@ -158,69 +157,22 @@ class SMPCAgent(object):
         v_disc    = np.diff(s_disc) / np.diff(t_disc)
         v_disc    = np.insert(v_disc, -1, v_disc[-1]) # repeat the last speed
 
-        # v_int    = filtfilt(np.ones((3,))/3,1,v_disc)
-        # curv_int = filtfilt(np.ones((3,))/3,1,curv_disc)
 
-        # s_int = [ s_disc[0] ]
-        # x_int = [ x_disc[0] ]
-        # y_int = [ y_disc[0] ]
-        # yaw_int = [ yaw_disc[0] ]
-
-        # for vel in v_int:
-        #     ds = vel * self.dt
-        #     curr_s = s_int[-1] + ds
-        #     curv = np.interp(curr_s, s_disc, curv_disc)
-
-        #     dx = np.cos(yaw_int[-1]) * ds
-        #     dy = np.sin(yaw_int[-1]) * ds
-        #     dyaw = curv * ds
-
-        #     s_int.append( curr_s )
-        #     x_int.append( x_int[-1] + dx )
-        #     y_int.append( y_int[-1] + dy )
-        #     yaw_int.append( yaw_int[-1] + dyaw )
-
-        # s_int = np.array(s_int[:-1])
-        # x_int = np.array(x_int[:-1])
-        # y_int = np.array(y_int[:-1])
-        # yaw_int = np.array(yaw_int[:-1])
-
-        # plt.subplot(211)
-        # plt.plot(t_disc, v_disc, 'rx')
-        # plt.plot(t_disc, v_int, 'b')
-        # plt.subplot(212)
-        # plt.plot(t_disc, curv_disc, 'rx')
-        # plt.plot(t_disc, curv_int, 'b')
-
-        # plt.figure()
-        # plt.subplot(411)
-        # plt.plot(t_disc, s_disc, 'rx')
-        # plt.plot(t_disc, s_int, 'b')
-
-        # plt.subplot(412)
-        # plt.plot(t_disc, x_disc, 'rx')
-        # plt.plot(t_disc, x_int, 'b')
-
-        # plt.subplot(413)
-        # plt.plot(t_disc, y_disc, 'rx')
-        # plt.plot(t_disc, y_int, 'b')
-
-        # plt.subplot(414)
-        # plt.plot(t_disc, yaw_disc, 'rx')
-        # plt.plot(t_disc, yaw_int, 'b')
-
-        # plt.show()
 
 
         self.reference = np.column_stack((t_disc, x_disc, y_disc, yaw_disc, v_disc))
-        # self.reference = np.column_stack((t_disc, x_int, y_int, yaw_int, v_int))
 
 
     def reference_regeneration(self, *state):
         if self.time==0:
+            # Get the high-level route using Carla's API (basically A* search over road segments).
+
             init_waypoint = self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
             goal          = self.map.get_waypoint(self.goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
             route = self.planner.trace_route(init_waypoint.transform.location, goal.transform.location)
+
+            # # Convert the high-level route into a path parametrized by arclength distance s (i.e. Frenet frame).
+            # # Generate a refernece by fitting a velocity profile with specified nominal speed and time discretization.
 
             way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
             self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
@@ -242,11 +194,7 @@ class SMPCAgent(object):
             self.feas_ref_inputs=np.vstack((self.feas_ref_inputs, np.array([self.feas_ref_inputs[-1,:]]*(self.N+1))))
             self.feas_ref_states_new=self.feas_ref_states
             self.feas_ref_inputs_new=self.feas_ref_inputs
-            # plt.plot(-self.feas_ref_states_new[:,1], self.feas_ref_states_new[:,0], 'kx', -self.feas_ref_states[:,1], self.feas_ref_states[:,0], 'ro')
-            # plt.plot(-self.reference[:,2], self.reference[:,1], 'r-')
-            # plt.axis("equal")
-            # plt.show()
-            # pdb.set_trace()
+
         else:
 
             x,y,psi,speed=state
@@ -268,14 +216,13 @@ class SMPCAgent(object):
             self.feas_ref_inputs_new=self.feas_ref_dict['u_opt']
             print(self.feas_ref_inputs_new.shape)
             if len(self.feas_ref_inputs_new.shape)!=1:
-                self.feas_ref_inputs_new=np.vstack((self.feas_ref_inputs_new, np.array([self.feas_ref_inputs_new[-1,:]]*self.N)))
+                self.feas_ref_inputs_new=np.vstack((self.feas_ref_inputs_new, np.array([self.feas_ref_inputs_new[-1,:]]*(self.N+1)))).reshape((-1,2))
             else:
-                self.feas_ref_inputs_new=np.array([self.feas_ref_inputs_new]*(self.N+1)).reshape(self.N+1,2)
+                self.feas_ref_inputs_new=np.array([self.feas_ref_inputs_new]*(self.N+1)).reshape((self.N+1,2))
 
             self.feas_ref_states_new=self.feas_ref_states_new
             self.feas_ref_inputs_new=self.feas_ref_inputs_new
-            # plt.plot(-self.feas_ref_states_new[:,1], self.feas_ref_states_new[:,0], 'kx', -self.feas_ref_states[:,1], self.feas_ref_states[:,0], 'ro')
-            # plt.show()
+
 
     def linearization_traj(self, *state):
                 x,y,psi,speed=state
@@ -295,10 +242,7 @@ class SMPCAgent(object):
                 l_states=np.array(states).reshape((self.N+1,-1))
                 l_inputs=self.prev_nom_inputs[0][:,1:].T
                 l_inputs=np.vstack((l_inputs,np.array([l_inputs[-1,:]]*2)))
-                # plt.plot(-l_states[:,1], l_states[:,0], 'k-')
-                # plt.axis('equal')
-                # plt.show()
-                # pdb.set_trace()
+
                 return l_states, l_inputs
 
 
@@ -316,10 +260,9 @@ class SMPCAgent(object):
 
         target_vehicle_positions=pred_dict["tvs_positions"]
         target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
+
         N_TV=len(target_vehicle_positions)
 
-        # target_vehicle_gmm_preds[0] =[np.array([[target_vehicle_gmm_preds[0][k][j,int(i/2),:] for i in range(self.N)] for j in range(self.N_modes)]) for k in range(N_TV)]
-        # target_vehicle_gmm_preds[1] =[np.array([[target_vehicle_gmm_preds[1][k][j,int(i/2),:,:] for i in range(self.N)] for j in range(self.N_modes)]) for k in range(N_TV)]
 
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y
@@ -350,20 +293,22 @@ class SMPCAgent(object):
         self.t_ref=np.argmin(np.linalg.norm(self.feas_ref_states[:,:2]-np.hstack((x,y)), axis=1))
 
 
-        """ TODO: add in SMPC code """
-        if self.goal_reached or self.frenet_traj.reached_trajectory_end(s, resolution=5.):#or self.t_ref>self.ref_horizon-self.SMPC.N-1:
+
+        if self.goal_reached or self.frenet_traj.reached_trajectory_end(s, resolution=5.):
             # Stop if the end of the path is reached and signal completion.
             self.goal_reached = True
 
         else:
             # Run SMPC Preds.
-            if self.time%25==0 and self.ref_horizon>self.t_ref+1:
+            if self.time%20==0 and self.ref_horizon>self.t_ref+1:
                 self.reference_regeneration(x,y,psi,speed)
+                # if self.feas_ref_inputs_new.shape[0]==13:
+                #     pdb.set_trace()
 
 
 
             t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
-            if self.prev_opt and self.time%2==1:
+            if self.prev_opt and self.time%10==0:
                 l_states, l_inputs = self.linearization_traj(x,y,psi,speed)
 
             else:
@@ -371,16 +316,30 @@ class SMPCAgent(object):
                 l_inputs=self.feas_ref_inputs_new[t_ref_new:t_ref_new+self.N+1,:]
 
 
+            ## TV shapes estimate along prediction horizon
+
             Rs_ev=[np.array([[np.cos(l_states[t,2]),np.sin(l_states[t,2])],[-np.sin(l_states[t,2]), np.cos(l_states[t,2])]]) for t in range(1,self.N+1)]
 
 
             tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
-            tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.SMPC.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
-            tv_Q=np.array([[1./(3.5+self.d_min)**2, 0.],[0., 1./(1+self.d_min)**2]])
-            tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.SMPC.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
-
-            # pdb.set_trace()
-
+            tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
+            if self.OA_inner_approx:
+                tv_Q=np.array([[1./(3.6+self.d_min)**2, 0.],[0., 1./(1.2+self.d_min)**2]])
+                tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
+            elif not self.obca_flag:
+                v_Q=np.array([[1./(2.6)**2, 0.],[0., 1./(1.45)**2]])
+                tv_shape_matrices=[[[ np.identity(2) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
+                for k in range(N_TV):
+                    for j in range(self.N_modes):
+                        for i in range(self.N-1):
+                            m_eval, m_evec= np.linalg.eigh(Rs_ev[i].T@v_Q@Rs_ev[i])
+                            m_sqrt=m_evec@np.diag(np.sqrt(m_eval))@m_evec.T
+                            m_sqrt_inv=m_evec@np.diag(np.sqrt(m_eval)**(-1))@m_evec.T
+                            s_eval, s_evec= np.linalg.eigh(m_sqrt_inv@tv_R[k][j][i].T@v_Q@tv_R[k][j][i]@m_sqrt_inv)
+                            temp=s_evec@np.diag(np.power(np.sqrt(s_eval)**(-1)+1., 2)**(-1))@s_evec.T
+                            tv_shape_matrices[k][j][i]=m_sqrt@temp@m_sqrt
+            else:
+                tv_shape_matrices=tv_R
 
             update_dict={  'dx0':x-l_states[0,0],     'dy0':y-l_states[0,1],         'dpsi0':psi-l_states[0,2],       'dv0':speed-l_states[0,3],
                          'x_tv0': [target_vehicle_positions[k][0] for k in range(N_TV)],        'y_tv0': [target_vehicle_positions[k][1] for k in range(N_TV)],
@@ -400,6 +359,8 @@ class SMPCAgent(object):
 
 
 
+            if 'ws' in self.warm_start.keys() and self.obca_flag:
+                update_dict.update({'ws': self.warm_start['ws']})
 
 
 
@@ -426,7 +387,11 @@ class SMPCAgent(object):
                 v_next    = sol_dict['v_next']
                 is_opt=sol_dict['optimal']
                 solve_time=sol_dict['solve_time']
+                self.warm_start={}
+                if is_opt and self.obca_flag:
+                    self.warm_start={'ws': [sol_dict['h_opt'],sol_dict['K_opt'],sol_dict['M_opt'],sol_dict['lmbd_opt'],sol_dict['nu_opt']]}
                 self.prev_opt=False
+                # self.prev_opt=is_opt
                 if self.prev_opt:
                     self.prev_nom_inputs=sol_dict['nom_u_ev']
 
@@ -434,18 +399,20 @@ class SMPCAgent(object):
             self.control_prev=np.array([u_control[0]+update_dict['a_lin'][0],u_control[1]+update_dict['df_lin'][0]])
             u0=self.control_prev
             v_des=v_next
-            # scaled_distance_sol=np.array([update_dict['dx0'](x-self.+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]]).T@tv_shape_matrices[0][0][0]@np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]])
 
-            scaled_distance=np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]]).T@tv_shape_matrices[0][0][0]@np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]])
-            # print(f"\toptimal?: {is_opt}")
-            # print(f"\tv_next: {v_next}")
-            # print(f"\tsteering: {u0[1]}")
+            # scaled_distance=np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]]).T@tv_shape_matrices[0][0][0]@np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]])
+
+
+            print(f"\toptimal?: {is_opt}")
+            print(f"\tv_next: {v_next}")
+            print(f"\tsteering: {u0[1]}")
             # print(f"\tsolve time: {solve_time}")
             # print(f"\t scaled distance_x: {np.sqrt(scaled_distance)}")
             # print(self.t_ref, self.time)
 
 
-            # pdb.set_trace()
+            ## Debugging: Plot expected hyperplanes for obstacle avoidance along the prediction horizon
+
             # if self.time%10 ==0 and is_opt:
             #     for i, c in zip( range(len(sol_dict["nom_z_ev"])), ['r', 'g', 'b']):
             #         arr = sol_dict["nom_z_ev"][i]

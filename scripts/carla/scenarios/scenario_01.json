@@ -8,11 +8,11 @@
 	"drone_viz_params" : {
 		"x"                  : 30.0,
 		"y"                  :  0.0,
-		"visualize_opencv"   : true,
+		"visualize_opencv"   : false,
 		"save_avi"           : true,
 		"overlay_gmm"        : true,
 		"overlay_ego_info"   : true,
-		"overlay_mode_probs" : true,
+		"overlay_mode_probs" : false,
 		"overlay_traj_hist"  : true
 	},
 	"ego_init_jsons" : [
