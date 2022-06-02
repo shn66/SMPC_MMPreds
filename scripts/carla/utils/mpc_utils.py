@@ -386,16 +386,25 @@ class SMPC_MMPreds():
     def _return_policy_class(self, i, N_TV, t_bar):
 
         if t_bar == 0 or t_bar==self.N-1:
-            M=[self.opti[i].variable(2, 4) for j in range(int((self.N-1)*self.N/2))]
-            K=[self.opti[i].variable(2,2*N_TV) for j in range(self.N)]
-            h=self.opti[i].variable(2, self.N)
+            M=[[[self.opti[i].variable(2, 4)] for n in range(t)] for t in range(self.N)]
+            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)]] for t in range(self.N)]
+            h=[[self.opti[i].variable(2, 1)] for t in range(self.N)]
+
+            M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][0] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)])]
+            h_stack=[ca.vertcat(*[h[t][0] for t in range(self.N)])]
+            K_stack=[[ca.diagcat(*[K[t][0][k] for t in range(self.N)]) for k in range(N_TV)]]
 
         else:
-            M=[self.opti[i].variable(2, 4) for j in range(int((t_bar-1)*t_bar/2)+(self.N_modes*N_TV)*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2)))]
-            K=[self.opti[i].variable(2,2*N_TV) for j in range(t_bar+(self.N_modes*N_TV)*(self.N-t_bar))]
-            h=self.opti[i].variable(2, t_bar+(self.N_modes**N_TV)*(self.N-t_bar))
+            h=[[self.opti[i].variable(2,1) for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(self.N)]
+            M=[[[self.opti[i].variable(2, 4) for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for j in range(t)] for t in range(self.N)]
+            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)] for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(self.N)]
 
-        return h,K,M
+            M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][m*int(t>=t_bar)] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)]) for m in range(self.N_modes)]
+            h_stack=[ca.vertcat(*[h[t][m*int(t>=t_bar)] for t in range(self.N)]) for m in range(self.N_modes)]
+            K_stack=[[ca.diagcat(*[K[t][m*int(t>=t_bar)][k] for t in range(self.N)]) for k in range(N_TV)] for m in range(self.N_modes)]
+        
+
+        return h_stack,M_stack,K_stack
 
     def _set_ATV_TV_dynamics(self, i, N_TV, x_tv0, y_tv0, mu_tv, sigma_tv):
 
@@ -405,14 +414,23 @@ class SMPC_MMPreds():
         T=self.T_tv[i]
         c=self.c_tv[i]
 
+        self.T_block=[[ca.MX((self.N+1)*2,2) for j in range(self.N_modes)] for k in range(N_TV)]
+        self.C_block=[[ca.MX((self.N+1)*2,1) for j in range(self.N_modes)] for k in range(N_TV)]
+        self.F_block=[[ca.MX((self.N+1)*2,self.N*2) for j in range(self.N_modes)] for k in range(N_TV)]
+
+        F=ca.DM.eye(2*N_TV)*self.noise_std[-1]
+
+
         for k in range(N_TV):
             for j in range(self.N_modes):
+                self.T_block[k][j][0:2,:]=ca.DM.eye(2)
                 for t in range(self.N):
                     if t==0:
                         self.opti[i].set_value(T[k][j][t], np.identity(2))
                         self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-np.hstack((x_tv0[k],y_tv0[k])))
                         e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
-                        self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], e_vec@np.diag(np.sqrt(e_val))@e_vec.T )
+                        self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], e_vec@np.diag(np.sqrt(e_val))@e_vec.T)
+
                     else:
 
                         e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
@@ -422,6 +440,11 @@ class SMPC_MMPreds():
                         self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], ca.chol(sigma_tv[k][j,t,:,:]) )
                         self.opti[i].set_value(T[k][j][t], Ttv)
                         self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-Ttv@mu_tv[k][j, t-1, :])
+
+                    self.T_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@self.T_block[k][j][t*2:(t+1)*2,:]
+                    self.C_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@self.C_block[k][j][t*2:(t+1)*2,:]+c[k][j][t]
+                    self.F_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@self.F_block[k][j][t*2:(t+1)*2,:]
+                    self.F_block[k][j][(t+1)*2:(t+2)*2,t*2:(t+1)*2]=F
 
 
 
@@ -447,6 +470,17 @@ class SMPC_MMPreds():
         A=[ca.MX.eye(4) for n in range(self.N+1)]
         B=[ca.MX(np.zeros((4, 2))) for n in range(self.N+1)]
 
+        A_block=ca.MX(4*(self.N+1),4)
+        B_block=ca.MX(4*(self.N+1),2*self.N)
+        E_block=ca.MX(4*(self.N+1),4*self.N)
+
+        A_block[0:4,0:4]=ca.eye(4)
+
+        E=ca.MX(4, 4)
+        E[0:4,0:4]=(ca.DM.eye(4))@ca.diag(self.noise_std[0:4])
+        # E[4:, 4:]=ca.DM.eye(2*N_TV)*self.noise_std[-1]
+
+
         for t in range(self.N):
             beta = ca.atan( self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_lin[i][t]) )
             dbeta = self.L_R/(1+(self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_lin[i][t]))**2)/(self.L_R+self.L_F)/ca.cos(self.df_lin[i][t])**2
@@ -466,12 +500,15 @@ class SMPC_MMPreds():
             B[t][2,1]=self.DT*(ca.fmax(self.v_lin[i][t],0.001)/self.L_R*ca.cos(beta)*dbeta)
             B[t][3,0]=self.DT*1.0
 
+            A_block[(t+1)*4:(t+2)*4, :]=A[t]
+            B_block[(t+1)*4:(t+2)*4,:]=A[t]@B_block[t*4:(t+1)*4,:]
+            B_block[(t+1)*4:(t+2)*4,t*2:(t+1)*2]=B[t]
+            E_block[(t+1)*4:(t+2)*4,:]=A[t]@E_block[t*4:(t+1)*4,:]
+            E_block[(t+1)*4:(t+2)*4,t*4:(t+1)*4]=E
 
-        E=ca.MX(4+2*N_TV, 4+2*N_TV)
-        E[0:4,0:4]=(ca.DM.eye(4))@ca.diag(self.noise_std[0:4])
-        E[4:, 4:]=ca.DM.eye(2*N_TV)*self.noise_std[-1]
+        
 
-        return A,B,E
+        return A_block,B_block,E_block
 
     def _oa_ev_ref(self, x_ev, y_ev, x_tv, y_tv, Q):
 
@@ -497,50 +534,29 @@ class SMPC_MMPreds():
         nom_u_ev_i = []
         eval_oa_i=[]
 
-        T=self.T_tv[i]
-        c=self.c_tv[i]
-        [A,B,E]=self._get_LTV_EV_dynamics(i, N_TV)
-        [h,K,M]=self.policy[i]
+
+        [A_block,B_block,E_block]=self._get_LTV_EV_dynamics(i, N_TV)
+        T_block=self.T_block
+        C_block=self.C_block
+        F_block=self.F_block
+
+        [h,M,K]=self.policy[i]
+
         slack=self.slacks[i]
         cost = 10*slack@slack
         x=0.5*(self.dz_curr[i][0]+self.x_lin[i][0]+self.x_lin[i][-1])
         y=0.5*(self.dz_curr[i][0]+self.y_lin[i][0]+self.y_lin[i][-1])
         self.opti[i].subject_to(slack>=0)
-        self.opti[i].subject_to( self.opti[i].bounded(self.V_MIN,
-                                                      self.v_lin[i][1]+A[0][3,:]@self.dz_curr[i]+B[0][3,:]@h[:,0],
-                                                      self.V_MAX))
-
-        self.opti[i].subject_to( self.opti[i].bounded(self.A_MIN,self.a_lin[i][0]+h[0,0],self.A_MAX))
 
 
+        self.opti[i].subject_to( self.A_DOT_MIN-slack<=(-self.u_prev[i][0]+self.a_lin[i][0]+h[0][0,0])*self.fps)
+        self.opti[i].subject_to((-self.u_prev[i][0]+self.a_lin[i][0]+h[0][0,0])*self.fps<=slack+self.A_DOT_MAX)
 
-        self.opti[i].subject_to( self.opti[i].bounded(self.DF_MIN, self.df_lin[i][0]+h[1,0], self.DF_MAX))
-
-
-
-        self.opti[i].subject_to( self.A_DOT_MIN-slack<=(-self.u_prev[i][0]+self.a_lin[i][0]+h[0,0])*self.fps)
-        self.opti[i].subject_to((-self.u_prev[i][0]+self.a_lin[i][0]+h[0,0])*self.fps<=slack+self.A_DOT_MAX)
-
-        self.opti[i].subject_to( self.DF_DOT_MIN-slack<=(-self.u_prev[i][1]+self.df_lin[i][0]+h[1,0])*self.fps)
-        self.opti[i].subject_to((-self.u_prev[i][1]+self.df_lin[i][0]+h[1,0])*self.fps<=slack+self.DF_DOT_MAX)
+        self.opti[i].subject_to( self.DF_DOT_MIN-slack<=(-self.u_prev[i][1]+self.df_lin[i][0]+h[0][1,0])*self.fps)
+        self.opti[i].subject_to((-self.u_prev[i][1]+self.df_lin[i][0]+h[0][1,0])*self.fps<=slack+self.DF_DOT_MAX)
 
 
         if t_bar==0:
-
-            A_block=ca.MX((4+2*N_TV)*self.N, 4+2*N_TV)
-            B_block=ca.MX((4+2*N_TV)*self.N, 2*self.N)
-            C_block=ca.MX((4+2*N_TV)*self.N, (2+2*N_TV)*self.N)
-            E_block=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-
-            A_block[0:4+2*N_TV, :]=ca.diagcat(A[0], *[T[k][0][0] for k in range(N_TV)])
-            A_block[0:4, 4:4+2*N_TV]=B[0]@K[0]
-            B_block[0:4,0:2]=B[0]
-            C_block[0:4+2*N_TV,0:2+2*N_TV]=ca.diagcat(ca.vertcat(ca.DM.eye(2), ca.DM(2,2)), ca.DM.eye(2*N_TV))
-            E_block[0:4+2*N_TV, 0:4+2*N_TV]=ca.diagcat(E[0:4,0:4], *[self.Sigma_tv_sqrt[i][k][0][0] for k in range(N_TV)])
-
-            H=h[:,0]
-            c_ev=-K[0]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][0][0], self.y_tv_ref[i][k][0][0]) for k in range(N_TV)])
-            C=ca.vertcat(c_ev, *[c[k][0][0] for k in range(N_TV)])
 
             for t in range(1,self.N):
 
@@ -549,44 +565,25 @@ class SMPC_MMPreds():
                 for k in range(N_TV):
 
 
-                    soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
-                                             slack+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))\
-                                                    @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                                                      +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:(2+2*N_TV)*t]@C)\
-                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])))
+                    z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(ca.horzcat(B_block[t*4:t*4+2,:]@M[0]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[0][l]@F_block[l][0]-int(l==k)*F_block[k][0][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                    
+                    y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[0]-T_block[k][0][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][0][t*2:(t+1)*2,:])\
+                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]))
+                    
+                    soc_constr=ca.soc(self.tight*z,y)
 
                     self.opti[i].subject_to(soc_constr>0)
 
 
-                A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=ca.diagcat(A[t], *[T[k][0][t] for k in range(N_TV)])@A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                A_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-
-
-                B_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                B_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,t*2:(t+1)*2]=B[t]
-
-
-                C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(2+2*N_TV):(t+1)*(2+2*N_TV)]=ca.diagcat(ca.vertcat(ca.MX.eye(2), ca.MX(2,2)), ca.MX.eye(2*N_TV))
-                c_ev=-K[t]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]) for k in range(N_TV)])
-                C=ca.vertcat(C, c_ev, *[c[k][0][t] for k in range(N_TV)])
-
-
-                E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),0:t*(4+2*N_TV)]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),0:t*(4+2*N_TV)]
-                E_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M[j],ca.DM(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-                E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
-
-                H=ca.vertcat(H, h[:,t])
-
-            nom_z_ev=ca.kron(ca.DM.eye(self.N),ca.horzcat(ca.DM.eye(4), ca.DM(4,2*N_TV)))@(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])+B_block@H)
+            nom_z_ev=A_block@self.dz_curr[i]+B_block@h[0]
             cost_matrix=ca.kron(ca.MX.eye(self.N),self.Q)
 
-            cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(H,ca.kron(ca.DM.eye(self.N),self.R))
+            cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(h[0],ca.kron(ca.DM.eye(self.N),self.R))
 
             nom_dv=nom_z_ev.reshape((4,self.N))[3,:]
-            nom_df=H.reshape((2,self.N))[1,:]
+            nom_df=h[0].reshape((2,self.N))[1,:]
             nom_diff_df=ca.diff(nom_df+self.df_ref[i][:-1],1,1)
-            nom_da=H.reshape((2,self.N))[0,:]
+            nom_da=h[0].reshape((2,self.N))[0,:]
             nom_diff_a=ca.diff(nom_da+self.a_ref[i][:-1],1,1)
 
             self.opti[i].subject_to( self.opti[i].bounded(self.V_MIN,
@@ -615,113 +612,29 @@ class SMPC_MMPreds():
 
         elif t_bar<self.N-1:
 
-                mode_map=list(product([*range(self.N_modes)],repeat=N_TV))
-                mode_map=sorted([(sum([10**mode_map[i][j] for j in range(len(mode_map[i]))]),)+mode_map[i] for i in range(len(mode_map))])
-                mode_map=[mode_map[i][1:] for i in range(len(mode_map))]
-                if not self.noswitch_bl:
-
-                    ## This considers the possibility that the TV can switch accross modes and enumerates all allowable mode sequences.
-                    ## VERY SLOW, not being used.
-
-
-                    seq=list(product([*range(self.N_modes**N_TV)],repeat=min(6,t_bar+1)))
-                    seq=seq[:min(self.N_seq_max, (self.N_modes**N_TV)**min(6,t_bar+1))]
-                    tail_seq=[[seq[j][-1]]*(self.N-min(6,t_bar+1)) for j in range(len(seq))]
-
-                    seq=[list(seq[i])+tail_seq[i] for i in range(len(seq))]
-
-                else:
-                    seq=[self.N*[m] for m in range(self.N_modes**N_TV)]
-
-
-                for s in range(len(seq)):
-
-
-                    A_block=ca.MX((4+2*N_TV)*self.N, 4+2*N_TV)
-                    B_block=ca.MX((4+2*N_TV)*self.N, 2*self.N)
-                    C_block=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-                    E_block=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-
-                    A_block[0:4+2*N_TV, :]=ca.diagcat(A[0], *[T[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
-                    A_block[0:4, 4:4+2*N_TV]=B[0]@K[0]
-
-                    B_block[0:4,0:2]=B[0]
-                    C_block[:4+2*N_TV,0:4+2*N_TV]=ca.diagcat(ca.DM.eye(4), ca.DM.eye(2*N_TV))
-                    E_block[0:4+2*N_TV, 0:4+2*N_TV]=E
-
-
-                    H=h[:,0]
-                    c_ev=-B[0]@K[0]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][0]][k]][0], self.y_tv_ref[i][k][mode_map[seq[s][0]][k]][0]) for k in range(N_TV)])
-                    C=ca.vertcat(c_ev, *[c[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
+                for j in range(self.N_modes):
 
                     for t in range(1,self.N):
 
                         # oa_ref=[self._oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
-                        oa_ref=[self._oa_ev_ref([self.x_lin[i][t-1], self.x_lin[i][t]], [self.y_lin[i][t-1], self.y_lin[i][t]], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
+                        oa_ref=[self._oa_ev_ref([self.x_lin[i][t-1], self.x_lin[i][t]], [self.y_lin[i][t-1], self.y_lin[i][t]], self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t], self.Q_tv[i][k][j][t-1]) for k in range(N_TV)]
                         # oa_ref=[self._oa_ev_ref([x, x], [y, y], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
 
-                        eval_oa_i.append([(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1] for k in range(N_TV)])
+                        eval_oa_i.append([(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1] for k in range(N_TV)])
 
                         for k in range(N_TV):
 
-                            soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
-                                                    2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))\
-                                                    @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                                                      +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:(4+2*N_TV)*t]@C)\
-                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]@(self.z_lin[i][:2, t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])))#+self.z_lin[i][:2, t])))
-
+                            z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@(ca.horzcat(B_block[t*4:t*4+2,:]@M[j]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[j][l]@F_block[l][j]-int(l==k)*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                    
+                            y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[j]-T_block[k][j][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][j][t*2:(t+1)*2,:])\
+                                                           +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t]))
+                            
+                            soc_constr=ca.soc(self.tight*z,y)
 
                             self.opti[i].subject_to(soc_constr>0)
 
 
-                        A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=ca.diagcat(A[t], *[T[k][mode_map[seq[s][t]][k]][t] for k in range(N_TV)])@A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-
-
-
-                        if t<t_bar or seq[s][t]==0:
-                            A_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-                            H=ca.vertcat(H, h[:,t])
-                            c_ev=-B[t]@K[t]@(ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)])\
-                                    -C_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),:(4+2*N_TV)*t]@C)
-
-                            E_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M[j],ca.MX(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-
-                            Gains=ca.horzcat(*[M[j] for j in range(int(t*(t-1)/2),int(t*(t+1)/2))], K[t])
-                            noise=ca.diagcat(ca.kron(ca.DM.eye(t),E[0:4,0:4]), *[self.Sigma_tv_sqrt[i][k][mode_map[seq[s][t]][k]][t].T for k in range(N_TV)])
-                            soc_da=ca.soc(Gains[0,:]@noise, slack +0.5-H[-2])
-                            soc_df=ca.soc(Gains[1,:]@noise, slack+0.2-H[-1])
-
-
-
-                        else:
-                            A_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t+seq[s][t]*(self.N-t_bar)]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-                            H=ca.vertcat(H, h[:,t+seq[s][t]*(self.N-t_bar)])
-                            c_ev=-B[t]@K[t+seq[s][t]*(self.N-t_bar)]@(ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)])\
-                                    -C_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),:(4+2*N_TV)*t]@C)
-                            E_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M[j+seq[s][t]*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2))], ca.DM(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-
-                            Gains=ca.horzcat(*[M[j+seq[s][t]*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2))] for j in range(int(t*(t-1)/2),int(t*(t+1)/2))], K[t+seq[s][t]*(self.N-t_bar)])
-                            noise=ca.diagcat(ca.kron(ca.DM.eye(t),E[0:4,0:4]), *[self.Sigma_tv_sqrt[i][k][mode_map[seq[s][t]][k]][t].T for k in range(N_TV)])
-                            soc_da=ca.soc(Gains[0,:]@noise, slack+0.5-H[-2])
-                            soc_df=ca.soc(Gains[1,:]@noise, slack+0.2-H[-1])
-
-
-
-                        B_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                        B_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,t*2:(t+1)*2]=B[t]
-
-
-                        C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                        C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=ca.diagcat(ca.DM.eye(4), ca.DM.eye(2*N_TV))
-
-                        C=ca.vertcat(C, c_ev, *[c[k][mode_map[seq[s][t]][k]][t] for k in range(N_TV)])
-
-                        E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),0:t*(4+2*N_TV)]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),0:t*(4+2*N_TV)]
-
-                        E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
-
-
-                    nom_z_ev=ca.kron(ca.DM.eye(self.N),ca.horzcat(ca.DM.eye(4), ca.DM(4,2*N_TV)))@(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])+B_block@H+C_block@C)
+                    nom_z_ev=A_block@self.dz_curr[i]+B_block@h[j]
                     nom_z_err=self.z_lin[i][:,1:].reshape((-1,1))-self.z_ref[i][:,1:].reshape((-1,1))+nom_z_ev
                     nom_z_diff= ca.diff(nom_z_ev.reshape((4,-1)),1,1).reshape((-1,1))
 
@@ -730,17 +643,17 @@ class SMPC_MMPreds():
                     cost_matrix_u=ca.kron(ca.diagcat(*[1**i for i in range(self.N-1)]),self.R)
 
                     nom_z_ev_i.append(nom_z_ev)
-                    nom_u_ev_i.append(H.reshape((2,self.N)))
+                    nom_u_ev_i.append(h[j].reshape((2,self.N)))
                     nom_dv=nom_z_ev.reshape((4,self.N))[3,:]
-                    nom_df=H.reshape((2,self.N))[1,:]
+                    nom_df=h[j].reshape((2,self.N))[1,:]
                     nom_diff_df=ca.diff(nom_df+self.df_lin[i][:-1],1,1)
-                    nom_da=H.reshape((2,self.N))[0,:]
+                    nom_da=h[j].reshape((2,self.N))[0,:]
                     nom_diff_a=ca.diff(nom_da+self.a_lin[i][:-1],1,1)
 
-                    nom_diff_u=ca.diff(H.reshape((2,self.N)),1,1).reshape((-1,1))/self.DT
+                    nom_diff_u=ca.diff(h[j].reshape((2,self.N)),1,1).reshape((-1,1))/self.DT
 
                     cost+=RefTrajGenerator._quad_form(nom_z_ev, 10*cost_matrix_z)+\
-                          RefTrajGenerator._quad_form(H,ca.kron(ca.DM.eye(self.N),ca.diag([0, 0])))+\
+                          RefTrajGenerator._quad_form(h[j],ca.kron(ca.DM.eye(self.N),ca.diag([0, 0])))+\
                           RefTrajGenerator._quad_form(nom_z_diff,100*cost_matrix_z[:(self.N-1)*4,:(self.N-1)*4])+\
                           RefTrajGenerator._quad_form(nom_diff_u,10*cost_matrix_u)
                           #+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),1*ca.MX.eye(2)))
@@ -769,8 +682,6 @@ class SMPC_MMPreds():
                                                               nom_diff_df/self.DT,
                                                               self.DF_DOT_MAX+slack))
 
-
-
         self.opti[i].minimize( cost )
         self.nom_z_ev.append(nom_z_ev_i)
         self.nom_u_ev.append(nom_u_ev_i)
@@ -784,8 +695,8 @@ class SMPC_MMPreds():
             sol = self.opti[i].solve()
 
             # Optimal solution.
-            u_control  = sol.value(self.policy[i][0][:,0])
-            v_tp1      = sol.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0,0])
+            u_control  = sol.value(self.policy[i][0][0][:2,0])
+            v_tp1      = sol.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0][0,0])
             is_feas     = True
 
             z_lin_ev   = sol.value(self.z_lin[i])
@@ -805,8 +716,8 @@ class SMPC_MMPreds():
             # Suboptimal solution (e.g. timed out).
 
             if self.opti[i].stats()['return_status']=='SUBOPTIMAL':
-                u_control  = self.opti[i].debug.value(self.policy[i][0][:,0])
-                v_tp1      = self.opti[i].debug.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0,0])
+                u_control  = self.opti[i].debug.value(self.policy[i][0][0][:2,0])
+                v_tp1      = self.opti[i].debug.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0][0,0])
                 is_feas     = True
 
                 z_lin_ev   = self.opti[i].debug.value(self.z_lin[i])
@@ -817,8 +728,9 @@ class SMPC_MMPreds():
                 nom_u_ev   = [self.opti[i].debug.value(x)+u_lin_ev[:,:-1] for x in self.nom_u_ev[i]]
 
                 z_tv_ref    = np.array([self.opti[i].debug.value(self.x_tv_ref[i][0][0]), self.opti[i].debug.value(self.y_tv_ref[i][0][0])])
-
                 eval_oa     = np.array([self.opti[i].debug.value(x[0]) for x in self.eval_oa[i]])
+
+
             else:
                 # pdb.set_trace()
                 if self.v_curr> 1:
@@ -925,7 +837,7 @@ class SMPC_MMPreds():
     def _update_previous_input(self, i, acc_prev, df_prev):
         self.opti[i].set_value(self.u_prev[i], [acc_prev, df_prev])
 
-# class SMPC_MMPreds_OBCA():
+class SMPC_MMPreds_OBCA():
 
     def __init__(self,
                 N            = 10,
@@ -1123,18 +1035,34 @@ class SMPC_MMPreds():
     def _return_policy_class(self, i, N_TV, t_bar):
 
         if t_bar == 0 or t_bar==self.N-1:
-            M=[self.opti[i].variable(2, 4) for j in range(int((self.N-1)*self.N/2))]
-            K=[self.opti[i].variable(2,2*N_TV) for j in range(self.N)]
-            h=self.opti[i].variable(2, self.N)
+            M=[[[self.opti[i].variable(2, 4)] for n in range(t)] for t in range(self.N)]
+            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)]] for t in range(self.N)]
+            h=[[self.opti[i].variable(2, 1)] for t in range(self.N)]
+
+            self.M_prev.append([self.opti[i].parameter(2*self.N, 4*self.N)])
+            self.K_prev.append([[self.opti[i].parameter(2*self.N,2*self.N) for k in range(N_TV)]])
+            self.h_prev.append([[self.opti[i].parameter(2*self.N, 1)]])
+
+
+            M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][0] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)])]
+            h_stack=[ca.vertcat(*[h[t][0] for t in range(self.N)])]
+            K_stack=[[ca.diagcat(*[K[t][0][k] for t in range(self.N)]) for k in range(N_TV)]]
 
         else:
-            M=[self.opti[i].variable(2, 4) for j in range(int((t_bar-1)*t_bar/2)+(self.N_modes*N_TV)*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2)))]
-            # M=[ca.DM(2, 4) for j in range(int((t_bar-1)*t_bar/2)+(self.N_modes*N_TV)*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2)))]
+            h=[[self.opti[i].variable(2,1) for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(self.N)]
+            M=[[[self.opti[i].variable(2, 4) for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for j in range(t)] for t in range(self.N)]
+            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)] for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(self.N)]
 
-            K=[self.opti[i].variable(2,2*N_TV) for j in range(t_bar+(self.N_modes*N_TV)*(self.N-t_bar))]
-            h=self.opti[i].variable(2, t_bar+(self.N_modes*N_TV)*(self.N-t_bar))
+            self.M_prev.append([self.opti[i].parameter(2*self.N, 4*self.N) for m in range(self.N_modes)])
+            self.K_prev.append([[self.opti[i].parameter(2*self.N,2*self.N) for k in range(N_TV)] for m in range(self.N_modes) ])
+            self.h_prev.append([[self.opti[i].parameter(2*self.N, 1)] for m in range(self.N_modes)])
 
-        return h,K,M
+            M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][m*int(t>=t_bar)] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)]) for m in range(self.N_modes)]
+            h_stack=[ca.vertcat(*[h[t][m*int(t>=t_bar)] for t in range(self.N)]) for m in range(self.N_modes)]
+            K_stack=[[ca.diagcat(*[K[t][m*int(t>=t_bar)][k] for t in range(self.N)]) for k in range(N_TV)] for m in range(self.N_modes)]
+        
+
+        return h_stack,M_stack,K_stack
 
     def _set_ATV_TV_dynamics(self, i, N_TV, x_tv0, y_tv0, mu_tv, sigma_tv):
 
@@ -1144,14 +1072,23 @@ class SMPC_MMPreds():
         T=self.T_tv[i]
         c=self.c_tv[i]
 
+        self.T_block=[[ca.MX((self.N+1)*2,2) for j in range(self.N_modes)] for k in range(N_TV)]
+        self.C_block=[[ca.MX((self.N+1)*2,1) for j in range(self.N_modes)] for k in range(N_TV)]
+        self.F_block=[[ca.MX((self.N+1)*2,self.N*2) for j in range(self.N_modes)] for k in range(N_TV)]
+
+        F=ca.DM.eye(2*N_TV)*self.noise_std[-1]
+
+
         for k in range(N_TV):
             for j in range(self.N_modes):
+                self.T_block[k][j][0:2,:]=ca.DM.eye(2)
                 for t in range(self.N):
                     if t==0:
                         self.opti[i].set_value(T[k][j][t], np.identity(2))
                         self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-np.hstack((x_tv0[k],y_tv0[k])))
                         e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
-                        self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], e_vec@np.diag(np.sqrt(e_val))@e_vec.T )
+                        self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], e_vec@np.diag(np.sqrt(e_val))@e_vec.T)
+
                     else:
 
                         e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
@@ -1161,6 +1098,11 @@ class SMPC_MMPreds():
                         self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], ca.chol(sigma_tv[k][j,t,:,:]) )
                         self.opti[i].set_value(T[k][j][t], Ttv)
                         self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-Ttv@mu_tv[k][j, t-1, :])
+
+                    self.T_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@self.T_block[k][j][t*2:(t+1)*2,:]
+                    self.C_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@self.C_block[k][j][t*2:(t+1)*2,:]+c[k][j][t]
+                    self.F_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@self.F_block[k][j][t*2:(t+1)*2,:]
+                    self.F_block[k][j][(t+1)*2:(t+2)*2,t*2:(t+1)*2]=F
 
 
 
@@ -1186,6 +1128,17 @@ class SMPC_MMPreds():
         A=[ca.MX.eye(4) for n in range(self.N+1)]
         B=[ca.MX(np.zeros((4, 2))) for n in range(self.N+1)]
 
+        A_block=ca.MX(4*(self.N+1),4)
+        B_block=ca.MX(4*(self.N+1),2*self.N)
+        E_block=ca.MX(4*(self.N+1),4*self.N)
+
+        A_block[0:4,0:4]=ca.eye(4)
+
+        E=ca.MX(4, 4)
+        E[0:4,0:4]=(ca.DM.eye(4))@ca.diag(self.noise_std[0:4])
+        # E[4:, 4:]=ca.DM.eye(2*N_TV)*self.noise_std[-1]
+
+
         for t in range(self.N):
             beta = ca.atan( self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_lin[i][t]) )
             dbeta = self.L_R/(1+(self.L_R / (self.L_F + self.L_R) * ca.tan(self.df_lin[i][t]))**2)/(self.L_R+self.L_F)/ca.cos(self.df_lin[i][t])**2
@@ -1205,12 +1158,15 @@ class SMPC_MMPreds():
             B[t][2,1]=self.DT*(ca.fmax(self.v_lin[i][t],0.001)/self.L_R*ca.cos(beta)*dbeta)
             B[t][3,0]=self.DT*1.0
 
+            A_block[(t+1)*4:(t+2)*4, :]=A[t]
+            B_block[(t+1)*4:(t+2)*4,:]=A[t]@B_block[t*4:(t+1)*4,:]
+            B_block[(t+1)*4:(t+2)*4,t*2:(t+1)*2]=B[t]
+            E_block[(t+1)*4:(t+2)*4,:]=A[t]@E_block[t*4:(t+1)*4,:]
+            E_block[(t+1)*4:(t+2)*4,t*4:(t+1)*4]=E
 
-        E=ca.MX(4+2*N_TV, 4+2*N_TV)
-        E[0:4,0:4]=(ca.DM.eye(4))@ca.diag(self.noise_std[0:4])
-        E[4:, 4:]=ca.DM.eye(2*N_TV)*self.noise_std[-1]
+        
 
-        return A,B,E
+        return A_block,B_block,E_block
 
     def _oa_ev_ref(self, x_ev, y_ev, x_tv, y_tv, Q):
 
@@ -1238,99 +1194,73 @@ class SMPC_MMPreds():
 
         T=self.T_tv[i]
         c=self.c_tv[i]
-        [A,B,E]=self._get_LTV_EV_dynamics(i, N_TV)
-        [h,K,M]=self.policy[i]
+        [A_block,B_block,E_block]=self._get_LTV_EV_dynamics(i, N_TV)
+        T_block=self.T_block
+        C_block=self.C_block
+        F_block=self.F_block
+
+        [h,M,K]=self.policy[i]
+
         h_prev=self.h_prev[i]
         K_prev=self.K_prev[i]
         M_prev=self.M_prev[i]
+
         slack=self.slacks[i]
+
         cost = 10*slack@slack
         x=0.5*(self.dz_curr[i][0]+self.x_lin[i][0]+self.x_lin[i][-1])
         y=0.5*(self.dz_curr[i][0]+self.y_lin[i][0]+self.y_lin[i][-1])
         self.opti[i].subject_to(slack>=0)
-        self.opti[i].subject_to( self.opti[i].bounded(self.V_MIN,
-                                                      self.v_lin[i][1]+A[0][3,:]@self.dz_curr[i]+B[0][3,:]@h[:,0],
-                                                      self.V_MAX))
+        
 
-        self.opti[i].subject_to( self.opti[i].bounded(self.A_MIN,self.a_lin[i][0]+h[0,0],self.A_MAX))
+        self.opti[i].subject_to( self.A_DOT_MIN-slack<=(-self.u_prev[i][0]+self.a_lin[i][0]+h[0][0,0])*self.fps)
+        self.opti[i].subject_to((-self.u_prev[i][0]+self.a_lin[i][0]+h[0][0,0])*self.fps<=slack+self.A_DOT_MAX)
 
-
-
-        self.opti[i].subject_to( self.opti[i].bounded(self.DF_MIN, self.df_lin[i][0]+h[1,0], self.DF_MAX))
-
-
-
-        self.opti[i].subject_to( self.A_DOT_MIN-slack<=(-self.u_prev[i][0]+self.a_lin[i][0]+h[0,0])*self.fps)
-        self.opti[i].subject_to((-self.u_prev[i][0]+self.a_lin[i][0]+h[0,0])*self.fps<=slack+self.A_DOT_MAX)
-
-        self.opti[i].subject_to( self.DF_DOT_MIN-slack<=(-self.u_prev[i][1]+self.df_lin[i][0]+h[1,0])*self.fps)
-        self.opti[i].subject_to((-self.u_prev[i][1]+self.df_lin[i][0]+h[1,0])*self.fps<=slack+self.DF_DOT_MAX)
+        self.opti[i].subject_to( self.DF_DOT_MIN-slack<=(-self.u_prev[i][1]+self.df_lin[i][0]+h[0][1,0])*self.fps)
+        self.opti[i].subject_to((-self.u_prev[i][1]+self.df_lin[i][0]+h[0][1,0])*self.fps<=slack+self.DF_DOT_MAX)
 
 
         if t_bar==0:
-
-            A_block=ca.MX((4+2*N_TV)*self.N, 4+2*N_TV)
-            B_block=ca.MX((4+2*N_TV)*self.N, 2*self.N)
-            C_block=ca.MX((4+2*N_TV)*self.N, (2+2*N_TV)*self.N)
-            E_block=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-
-            A_block[0:4+2*N_TV, :]=ca.diagcat(A[0], *[T[k][0][0] for k in range(N_TV)])
-            A_block[0:4, 4:4+2*N_TV]=B[0]@K[0]
-            B_block[0:4,0:2]=B[0]
-            C_block[0:4+2*N_TV,0:2+2*N_TV]=ca.diagcat(ca.vertcat(ca.DM.eye(2), ca.DM(2,2)), ca.DM.eye(2*N_TV))
-            E_block[0:4+2*N_TV, 0:4+2*N_TV]=ca.diagcat(E[0:4,0:4], *[self.Sigma_tv_sqrt[i][k][0][0] for k in range(N_TV)])
-
-            H=h[:,0]
-            c_ev=-K[0]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][0][0], self.y_tv_ref[i][k][0][0]) for k in range(N_TV)])
-            C=ca.vertcat(c_ev, *[c[k][0][0] for k in range(N_TV)])
 
             self.Q_tv=self.R_tv
 
             for t in range(1,self.N):
 
-                oa_ref=[self._oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t], self.Q_tv[i][k][0][t-1]) for k in range(N_TV)]
+                R_ev=self.R_ev[i][t-1].T
 
-                for k in range(N_TV):
+                        for k in range(N_TV):
 
+                            lmbd=self.lmbd_dual_var[i][k][0][:,t-1].T
+                            nu=self.nu_dual_var[i][k][0][:,t-1].T
+                            lmbd_prev=self.lmbd_prev[i][k][0][:,t-1].T
+                            nu_prev=self.nu_prev[i][k][0][:,t-1].T
+                            R_tv=self.R_tv[i][k][0][t-1].T
+                            # pdb.set_trace()
+                            z=(lmbd_prev@self.G@R_ev)@(ca.horzcat(B_block[t*4:t*4+2,:]@M[0]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[0][l]@F_block[l][0]-int(l==k)*F_block[k][0][t*2:(t+1)*2,:] for l in range(N_TV)]))\
+                              +((lmbd-lmbd_prev)@self.G@R_ev)@(ca.horzcat(B_block[t*4:t*4+2,:]@M_prev[0]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K_prev[0][l]@F_block[l][0]-int(l==k)*F_block[k][0][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                            
+                            y=(lmbd_prev@self.G@R_ev)@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[0]-T_block[k][0][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][0][t*2:(t+1)*2,:])\
+                              +((lmbd-lmbd_prev)@self.G@R_ev)@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h_prev[0]-T_block[k][0][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][0][t*2:(t+1)*2,:])\
+                              -(lmbd+nu)@self.g-lmbd@self.G@R_ev@self.z_lin[i][:2, t]-.01
 
-                    soc_constr=ca.soc(self.tight*(-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]),
-                                             slack+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))\
-                                                    @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                                                      +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:(2+2*N_TV)*t]@C)\
-                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])))
-
-                    self.opti[i].subject_to(soc_constr>0)
-
-
-                A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=ca.diagcat(A[t], *[T[k][0][t] for k in range(N_TV)])@A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                A_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-
-
-                B_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                B_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,t*2:(t+1)*2]=B[t]
+                            soc_constr=ca.soc(self.tight*z,y)
 
 
-                C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(2+2*N_TV):(t+1)*(2+2*N_TV)]=ca.diagcat(ca.vertcat(ca.MX.eye(2), ca.MX(2,2)), ca.MX.eye(2*N_TV))
-                c_ev=-K[t]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]) for k in range(N_TV)])
-                C=ca.vertcat(C, c_ev, *[c[k][0][t] for k in range(N_TV)])
+                            self.opti[i].subject_to(soc_constr>0)
+                            self.opti[i].subject_to(lmbd>=0)
+                            self.opti[i].subject_to(nu>=0)
+                            self.opti[i].subject_to(lmbd@self.G@R_ev+nu@self.G@R_tv==0)
+                            self.opti[i].subject_to(ca.norm_2(lmbd@self.G@R_ev)<=1)
 
-
-                E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),0:t*(4+2*N_TV)]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),0:t*(4+2*N_TV)]
-                E_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M[j],ca.DM(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-                E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
-
-                H=ca.vertcat(H, h[:,t])
-
-            nom_z_ev=ca.kron(ca.DM.eye(self.N),ca.horzcat(ca.DM.eye(4), ca.DM(4,2*N_TV)))@(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])+B_block@H)
+            nom_z_ev=A_block@self.dz_curr[i]+B_block@h[0]
             cost_matrix=ca.kron(ca.MX.eye(self.N),self.Q)
 
-            cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(H,ca.kron(ca.DM.eye(self.N),self.R))
+            cost+=RefTrajGenerator._quad_form(nom_z_ev, cost_matrix)+RefTrajGenerator._quad_form(h[0],ca.kron(ca.DM.eye(self.N),self.R))
 
             nom_dv=nom_z_ev.reshape((4,self.N))[3,:]
-            nom_df=H.reshape((2,self.N))[1,:]
+            nom_df=h[0].reshape((2,self.N))[1,:]
             nom_diff_df=ca.diff(nom_df+self.df_ref[i][:-1],1,1)
-            nom_da=H.reshape((2,self.N))[0,:]
+            nom_da=h[0].reshape((2,self.N))[0,:]
             nom_diff_a=ca.diff(nom_da+self.a_ref[i][:-1],1,1)
 
             self.opti[i].subject_to( self.opti[i].bounded(self.V_MIN,
@@ -1359,89 +1289,26 @@ class SMPC_MMPreds():
 
         elif t_bar<self.N-1:
 
-                mode_map=list(product([*range(self.N_modes)],repeat=N_TV))
-                mode_map=sorted([(sum([10**mode_map[i][j] for j in range(len(mode_map[i]))]),)+mode_map[i] for i in range(len(mode_map))])
-                mode_map=[mode_map[i][1:] for i in range(len(mode_map))]
-                if not self.noswitch_bl:
-
-                    ## This considers the possibility that the TV can switch accross modes and enumerates all allowable mode sequences.
-                    ## VERY SLOW, not being used.
-
-
-                    seq=list(product([*range(self.N_modes**N_TV)],repeat=min(6,t_bar+1)))
-                    seq=seq[:min(self.N_seq_max, (self.N_modes**N_TV)**min(6,t_bar+1))]
-                    tail_seq=[[seq[j][-1]]*(self.N-min(6,t_bar+1)) for j in range(len(seq))]
-
-                    seq=[list(seq[i])+tail_seq[i] for i in range(len(seq))]
-
-                else:
-                    seq=[(self.N+1)*[m] for m in range(self.N_modes**N_TV)]
-
-
-                for s in range(len(seq)):
-
-
-                    A_block=ca.MX((4+2*N_TV)*self.N, 4+2*N_TV)
-                    B_block=ca.MX((4+2*N_TV)*self.N, 2*self.N)
-                    C_block=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-                    E_block=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-
-                    A_block_prev=ca.MX((4+2*N_TV)*self.N, 4+2*N_TV)
-                    B_block_prev=ca.MX((4+2*N_TV)*self.N, 2*self.N)
-                    C_block_prev=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-                    E_block_prev=ca.MX((4+2*N_TV)*self.N, (4+2*N_TV)*self.N)
-
-                    A_block[0:4+2*N_TV, :]=ca.diagcat(A[0], *[T[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
-                    A_block[0:4, 4:4+2*N_TV]=B[0]@K[0]
-
-                    A_block_prev[0:4+2*N_TV, :]=ca.diagcat(A[0], *[T[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
-                    A_block_prev[0:4, 4:4+2*N_TV]=B[0]@K_prev[0]
-
-                    B_block[0:4,0:2]=B[0]
-                    C_block[:4+2*N_TV,0:4+2*N_TV]=ca.diagcat(ca.DM.eye(4), ca.DM.eye(2*N_TV))
-                    E_block[0:4+2*N_TV, 0:4+2*N_TV]=E
-
-                    B_block_prev[0:4,0:2]=B[0]
-                    C_block_prev[:4+2*N_TV,0:4+2*N_TV]=ca.diagcat(ca.DM.eye(4), ca.DM.eye(2*N_TV))
-                    E_block_prev[0:4+2*N_TV, 0:4+2*N_TV]=E
-
-
-                    H=h[:,0]
-                    H_prev=h_prev[:,0]
-                    c_ev=-B[0]@K[0]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][0]][k]][0], self.y_tv_ref[i][k][mode_map[seq[s][0]][k]][0]) for k in range(N_TV)])
-                    C=ca.vertcat(c_ev, *[c[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
-
-                    c_ev_prev=-B[0]@K_prev[0]@ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][0]][k]][0], self.y_tv_ref[i][k][mode_map[seq[s][0]][k]][0]) for k in range(N_TV)])
-                    C_prev=ca.vertcat(c_ev_prev, *[c[k][mode_map[seq[s][0]][k]][0] for k in range(N_TV)])
+                for j in range(self.N_modes):
 
                     for t in range(1,self.N+1):
-
-                        # oa_ref=[self._oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
-                        # oa_ref=[self._oa_ev_ref([self.x_lin[i][t-1], self.x_lin[i][t]], [self.y_lin[i][t-1], self.y_lin[i][t]], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
-                        # oa_ref=[self._oa_ev_ref([x, x], [y, y], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
-
-                        # eval_oa_i.append([(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t])).T@self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1] for k in range(N_TV)])
 
                         R_ev=self.R_ev[i][t-1].T
 
                         for k in range(N_TV):
 
-                            lmbd=self.lmbd_dual_var[i][k][mode_map[seq[s][t]][k]][:,t-1].T
-                            nu=self.nu_dual_var[i][k][mode_map[seq[s][t]][k]][:,t-1].T
-                            lmbd_prev=self.lmbd_prev[i][k][mode_map[seq[s][t]][k]][:,t-1].T
-                            nu_prev=self.nu_prev[i][k][mode_map[seq[s][t]][k]][:,t-1].T
-                            R_tv=self.R_tv[i][k][mode_map[seq[s][t]][k]][t-1].T
+                            lmbd=self.lmbd_dual_var[i][k][j][:,t-1].T
+                            nu=self.nu_dual_var[i][k][j][:,t-1].T
+                            lmbd_prev=self.lmbd_prev[i][k][j][:,t-1].T
+                            nu_prev=self.nu_prev[i][k][j][:,t-1].T
+                            R_tv=self.R_tv[i][k][j][t-1].T
                             # pdb.set_trace()
-                            z=(lmbd_prev@self.G@R_ev+nu_prev@self.G@R_tv)@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]\
-                              +((lmbd-lmbd_prev)@self.G@R_ev+(nu-nu_prev)@self.G@R_tv)@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))@E_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                            y=(lmbd_prev@self.G@R_ev+nu_prev@self.G@R_tv)@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))\
-                              @(A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                              +B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H+C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:(4+2*N_TV)*t]@C)\
-                              +((lmbd-lmbd_prev)@self.G@R_ev+(nu-nu_prev)@self.G@R_tv)@ca.horzcat(ca.DM.eye(2),ca.DM(2,2),ca.kron([-int(j==k) for j in range(N_TV)],ca.DM.eye(2)))\
-                              @(A_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])\
-                              +B_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:2*t]@H_prev+C_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:(4+2*N_TV)*t]@C_prev)\
-                              -(lmbd+nu)@self.g+(lmbd@self.G@R_ev+nu@self.G@R_tv)@self.z_lin[i][:2, t]-.01
-
+                            z=(lmbd_prev@self.G@R_ev)@(ca.horzcat(B_block[t*4:t*4+2,:]@M[j]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[j][l]@F_block[l][j]-int(l==k)*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))\
+                              +((lmbd-lmbd_prev)@self.G@R_ev)@(ca.horzcat(B_block[t*4:t*4+2,:]@M_prev[j]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K_prev[j][l]@F_block[l][j]-int(l==k)*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                            
+                            y=(lmbd_prev@self.G@R_ev)@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[j]-T_block[k][j][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][j][t*2:(t+1)*2,:])\
+                              +((lmbd-lmbd_prev)@self.G@R_ev)@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h_prev[j]-T_block[k][j][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][j][t*2:(t+1)*2,:])\
+                              -(lmbd+nu)@self.g-lmbd@self.G@R_ev@self.z_lin[i][:2, t]-.01
 
 
 
@@ -1451,86 +1318,11 @@ class SMPC_MMPreds():
                             self.opti[i].subject_to(soc_constr>0)
                             self.opti[i].subject_to(lmbd>=0)
                             self.opti[i].subject_to(nu>=0)
-                            self.opti[i].subject_to(ca.norm_2(ca.horzcat((lmbd)@self.G,(nu)@self.G))<=1)
-
-                        if t<self.N:
-                            A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=ca.diagcat(A[t], *[T[k][mode_map[seq[s][t]][k]][t] for k in range(N_TV)])@A_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-
-                            A_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=ca.diagcat(A[t], *[T[k][mode_map[seq[s][t]][k]][t] for k in range(N_TV)])@A_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
+                            self.opti[i].subject_to(lmbd@self.G@R_ev+nu@self.G@R_tv==0)
+                            self.opti[i].subject_to(ca.norm_2(lmbd@self.G@R_ev)<=1)
 
 
-                            if t<t_bar or seq[s][t]==0:
-                                A_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-
-                                A_block_prev[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K_prev[t]@A_block_prev[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-                                H=ca.vertcat(H, h[:,t])
-                                H_prev=ca.vertcat(H_prev, h_prev[:,t])
-                                c_ev=-B[t]@K[t]@(ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)])\
-                                        -C_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),:(4+2*N_TV)*t]@C)
-                                c_ev_prev=-B[t]@K_prev[t]@(ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)])\
-                                        -C_block_prev[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),:(4+2*N_TV)*t]@C_prev)
-
-                                E_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M[j],ca.MX(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-                                E_block_prev[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M_prev[j],ca.MX(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-
-                                # Gains=ca.horzcat(*[M[j] for j in range(int(t*(t-1)/2),int(t*(t+1)/2))], K[t])
-                                # noise=ca.diagcat(ca.kron(ca.DM.eye(t),E[0:4,0:4]), *[self.Sigma_tv_sqrt[i][k][mode_map[seq[s][t]][k]][t].T for k in range(N_TV)])
-                                # soc_da=ca.soc(Gains[0,:]@noise, slack +0.5-H[-2])
-                                # soc_df=ca.soc(Gains[1,:]@noise, slack+0.2-H[-1])
-
-
-
-                            else:
-                                A_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t+seq[s][t]*(self.N-t_bar)]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-                                H=ca.vertcat(H, h[:,t+seq[s][t]*(self.N-t_bar)])
-                                c_ev=-B[t]@K[t+seq[s][t]*(self.N-t_bar)]@(ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)])\
-                                        -C_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),:(4+2*N_TV)*t]@C)
-                                E_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M[j+seq[s][t]*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2))], ca.DM(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-
-                                A_block_prev[t*(4+2*N_TV):t*(4+2*N_TV)+4,4:4+2*N_TV]=B[t]@K[t+seq[s][t]*(self.N-t_bar)]@A_block[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),4:4+2*N_TV]
-                                H_prev=ca.vertcat(H_prev, h_prev[:,t+seq[s][t]*(self.N-t_bar)])
-                                c_ev_prev=-B[t]@K_prev[t+seq[s][t]*(self.N-t_bar)]@(ca.vertcat(*[ca.vertcat(self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t]) for k in range(N_TV)])\
-                                        -C_block_prev[(t-1)*(4+2*N_TV)+4:t*(4+2*N_TV),:(4+2*N_TV)*t]@C_prev)
-                                E_block_prev[t*(4+2*N_TV):t*(4+2*N_TV)+4,0:t*(4+2*N_TV)]+=B[t]@ca.horzcat(*[ca.horzcat(M_prev[j+seq[s][t]*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2))], ca.DM(2,2*N_TV)) for j in range(int(t*(t-1)/2),int(t*(t+1)/2))])
-
-
-
-                                # Gains=ca.horzcat(*[M[j+seq[s][t]*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2))] for j in range(int(t*(t-1)/2),int(t*(t+1)/2))], K[t+seq[s][t]*(self.N-t_bar)])
-                                # noise=ca.diagcat(ca.kron(ca.DM.eye(t),E[0:4,0:4]), *[self.Sigma_tv_sqrt[i][k][mode_map[seq[s][t]][k]][t].T for k in range(N_TV)])
-                                # soc_da=ca.soc(Gains[0,:]@noise, slack+0.5-H[-2])
-                                # soc_df=ca.soc(Gains[1,:]@noise, slack+0.2-H[-1])
-
-
-
-                            B_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@B_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                            B_block[t*(4+2*N_TV):t*(4+2*N_TV)+4,t*2:(t+1)*2]=B[t]
-
-
-                            C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@C_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                            C_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=ca.diagcat(ca.DM.eye(4), ca.DM.eye(2*N_TV))
-
-                            C=ca.vertcat(C, c_ev, *[c[k][mode_map[seq[s][t]][k]][t] for k in range(N_TV)])
-
-                            E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),0:t*(4+2*N_TV)]=A_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@E_block[(t-1)*(4+2*N_TV):t*(4+2*N_TV),0:t*(4+2*N_TV)]
-
-                            E_block[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
-
-
-                            B_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@B_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                            B_block_prev[t*(4+2*N_TV):t*(4+2*N_TV)+4,t*2:(t+1)*2]=B[t]
-
-
-                            C_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]=A_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@C_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),:]
-                            C_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=ca.diagcat(ca.DM.eye(4), ca.DM.eye(2*N_TV))
-
-                            C_prev=ca.vertcat(C_prev, c_ev_prev, *[c[k][mode_map[seq[s][t]][k]][t] for k in range(N_TV)])
-
-                            E_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),0:t*(4+2*N_TV)]=A_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),:]@E_block_prev[(t-1)*(4+2*N_TV):t*(4+2*N_TV),0:t*(4+2*N_TV)]
-
-                            E_block_prev[t*(4+2*N_TV):(t+1)*(4+2*N_TV),t*(4+2*N_TV):(t+1)*(4+2*N_TV)]=E
-
-
-                    nom_z_ev=ca.kron(ca.DM.eye(self.N),ca.horzcat(ca.DM.eye(4), ca.DM(4,2*N_TV)))@(A_block@ca.vertcat(self.dz_curr[i],*[self.z_tv_curr[i][:,k] for k in range(N_TV)])+B_block@H+C_block@C)
+                    nom_z_ev=A_block@self.dz_curr[i]+B_block@h[j]
                     nom_z_err=self.z_lin[i][:,1:].reshape((-1,1))-self.z_ref[i][:,1:].reshape((-1,1))+nom_z_ev
                     nom_z_diff= ca.diff(nom_z_ev.reshape((4,-1)),1,1).reshape((-1,1))
 
@@ -1539,17 +1331,17 @@ class SMPC_MMPreds():
                     cost_matrix_u=ca.kron(ca.diagcat(*[1**i for i in range(self.N-1)]),self.R)
 
                     nom_z_ev_i.append(nom_z_ev)
-                    nom_u_ev_i.append(H.reshape((2,self.N)))
+                    nom_u_ev_i.append(h[j].reshape((2,self.N)))
                     nom_dv=nom_z_ev.reshape((4,self.N))[3,:]
-                    nom_df=H.reshape((2,self.N))[1,:]
+                    nom_df=h[j].reshape((2,self.N))[1,:]
                     nom_diff_df=ca.diff(nom_df+self.df_lin[i][:-1],1,1)
-                    nom_da=H.reshape((2,self.N))[0,:]
+                    nom_da=h[j].reshape((2,self.N))[0,:]
                     nom_diff_a=ca.diff(nom_da+self.a_lin[i][:-1],1,1)
 
-                    nom_diff_u=ca.diff(H.reshape((2,self.N)),1,1).reshape((-1,1))/self.DT
+                    nom_diff_u=ca.diff(h[j].reshape((2,self.N)),1,1).reshape((-1,1))/self.DT
 
                     cost+=RefTrajGenerator._quad_form(nom_z_err, 10*cost_matrix_z)+\
-                          RefTrajGenerator._quad_form(H,ca.kron(ca.DM.eye(self.N),ca.diag([0., 0.])))+\
+                          RefTrajGenerator._quad_form(h[j],ca.kron(ca.DM.eye(self.N),ca.diag([0., 0.])))+\
                           RefTrajGenerator._quad_form(nom_z_diff,1000*cost_matrix_z[:(self.N-1)*4,:(self.N-1)*4])+\
                           RefTrajGenerator._quad_form(nom_diff_u,10*cost_matrix_u)
                           #+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),1*ca.MX.eye(2)))
@@ -1588,31 +1380,33 @@ class SMPC_MMPreds():
     def solve(self, i):
         st = time.time()
 
+        N_TV=1+int(i/self.t_bar_max)
+        t_bar=i-(N_TV-1)*self.t_bar_max
+
         try:
             # pdb.set_trace()
             sol = self.opti[i].solve()
 
             # Optimal solution.
-            u_control  = sol.value(self.policy[i][0][:,0])
-            v_tp1      = sol.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0,0])
+            u_control  = sol.value(self.policy[i][0][0][:2,0])
+            v_tp1      = sol.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0][0,0])
             is_feas     = True
 
             z_lin_ev   = sol.value(self.z_lin[i])
             u_lin_ev   = sol.value(self.u_lin[i])
             z_ref_ev   = sol.value(self.z_ref[i])
 
-            N_TV=1+int(i/self.t_bar_max)
-            t_bar=i-(N_TV-1)*self.t_bar_max
+
 
             if t_bar == 0 or t_bar==self.N-1:
-                M_opt=[sol.value(self.policy[i][2][j]) for j in range(int((self.N-1)*self.N/2))]
-                K_opt=[sol.value(self.policy[i][1][j]) for j in range(self.N)]
-                h_opt=sol.value(self.policy[i][0])
+                M_opt=[sol.value(self.policy[i][1][0])]
+                K_opt=[[sol.value(self.policy[i][2][0][k]) for k in range(N_TV)]]
+                h_opt=[sol.value(self.policy[i][0][0])]
 
             else:
-                M_opt=[sol.value(self.policy[i][2][j]) for j in range(int((t_bar-1)*t_bar/2)+(self.N_modes*N_TV)*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2)))]
-                K_opt=[sol.value(self.policy[i][1][j]) for j in range(t_bar+(self.N_modes*N_TV)*(self.N-t_bar))]
-                h_opt=sol.value(self.policy[i][0])
+                M_opt=[sol.value(self.policy[i][1][j]) for j in range(self.N_modes)]
+                K_opt=[[sol.value(self.policy[i][2][j][k]) for k in range(N_TV)] for j in range(self.N_modes)]
+                h_opt=[sol.value(self.policy[i][0][j]) for j in range(self.N_modes)]
 
             lmbd_opt    = [[sol.value(self.lmbd_dual_var[i][k][j]) for j in range(self.N_modes)] for k in range(N_TV)]
             nu_opt     = [[sol.value(self.nu_dual_var[i][k][j]) for j in range(self.N_modes)] for k in range(N_TV)]
@@ -1641,18 +1435,15 @@ class SMPC_MMPreds():
                 nom_z_ev   = [self.opti[i].debug.value(x).reshape((4,-1))+z_lin_ev[:,1:] for x in self.nom_z_ev[i]]
                 nom_u_ev   = [self.opti[i].debug.value(x)+u_lin_ev[:,:-1] for x in self.nom_u_ev[i]]
 
-                N_TV=1+int(i/self.t_bar_max)
-                t_bar=i-(N_TV-1)*self.t_bar_max
-
                 if t_bar == 0 or t_bar==self.N-1:
-                    M_opt=[self.opti[i].debug.value(self.policy[i][2][j]) for j in range(int((self.N-1)*self.N/2))]
-                    K_opt=[self.opti[i].debug.value(self.policy[i][1][j]) for j in range(self.N)]
-                    h_opt=self.opti[i].debug.value(self.policy[i][0])
+                    M_opt=[self.opti[i].debug.value(self.policy[i][1][0])]
+                    K_opt=[[self.opti[i].debug.value(self.policy[i][2][0][k]) for k in range(N_TV)]]
+                    h_opt=[self.opti[i].debug.value(self.policy[i][0][0])]
 
                 else:
-                    M_opt=[self.opti[i].debug.value(self.policy[i][2][j]) for j in range(int((t_bar-1)*t_bar/2)+(self.N_modes*N_TV)*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2)))]
-                    K_opt=[self.opti[i].debug.value(self.policy[i][1][j]) for j in range(t_bar+(self.N_modes*N_TV)*(self.N-t_bar))]
-                    h_opt=self.opti[i].debug.value(self.policy[i][0])
+                    M_opt=[self.opti[i].debug.value(self.policy[i][1][j]) for j in range(self.N_modes)]
+                    K_opt=[[self.opti[i].debug.value(self.policy[i][2][j][k]) for k in range(N_TV)] for j in range(self.N_modes)]
+                    h_opt=[self.opti[i].debug.value(self.policy[i][0][j]) for j in range(self.N_modes)]
 
                 lmbd_opt    = [[self.opti[i].debug.value(self.lmbd_dual_var[i][k][j]) for j in range(self.N_modes)] for k in range(N_TV)]
                 nu_opt     = [[self.opti[i].debug.value(self.nu_dual_var[i][k][j]) for j in range(self.N_modes)] for k in range(N_TV)]
@@ -1714,36 +1505,39 @@ class SMPC_MMPreds():
         t_bar=i-(N_TV-1)*self.t_bar_max
 
         if t_bar == 0 or t_bar==self.N-1:
-            for j in range(int((self.N-1)*self.N/2)):
-                self.opti[i].set_value(self.M_prev[i][j], np.zeros((2,4)))
-                if 'ws' in update_dict.keys():
-                    self.opti[i].set_value(self.M_prev[i][j], update_dict['ws'][2][j])
-                    # self.opti[i].set_initial(self.policy[i][2][j], update_dict['ws'][2][j])
-            for j in range(self.N):
-                self.opti[i].set_value(self.K_prev[i][j], np.zeros((2,2*N_TV)))
-                if 'ws' in update_dict.keys():
-                    self.opti[i].set_value(self.K_prev[i][j], update_dict['ws'][1][j])
-                    # self.opti[i].set_initial(self.policy[i][1][j], update_dict['ws'][1][j])
-            self.opti[i].set_value(self.h_prev[i], np.zeros((2,self.N)))
+            
+            self.opti[i].set_value(self.M_prev[i][0], np.zeros((2*self.N,4*self.N)))
+            self.opti[i].set_value(self.h_prev[i][0], np.zeros((2*self.N,1)))
             if 'ws' in update_dict.keys():
-                self.opti[i].set_value(self.h_prev[i], update_dict['ws'][0])
+                self.opti[i].set_value(self.M_prev[i][0], update_dict['ws'][1][0])
+                self.opti[i].set_value(self.h_prev[i][0], update_dict['ws'][0][0])
+                # self.opti[i].set_initial(self.policy[i][2][j], update_dict['ws'][2][j])
+            for k in range(N_TV):
+                self.opti[i].set_value(self.K_prev[i][0][k], np.zeros((2*self.N,2*self.N)))
+                if 'ws' in update_dict.keys():
+                    self.opti[i].set_value(self.K_prev[i][0][k], update_dict['ws'][2][0][k])
+                    # self.opti[i].set_initial(self.policy[i][1][j], update_dict['ws'][1][j])
+                
                 # self.opti[i].set_initial(self.policy[i][0], update_dict['ws'][0])
         else:
-            for j in range(int((t_bar-1)*t_bar/2)+(self.N_modes*N_TV)*(int((self.N-1)*self.N/2)-int((t_bar-1)*t_bar/2))):
-                self.opti[i].set_value(self.M_prev[i][j], np.zeros((2,4)))
+            for j in range(self.N_modes):
+                self.opti[i].set_value(self.M_prev[i][j], np.zeros((2*self.N,4*self.N)))
+                self.opti[i].set_value(self.h_prev[i][j], np.zeros((2*self.N,1)))
                 if 'ws' in update_dict.keys():
-                    self.opti[i].set_value(self.M_prev[i][j], update_dict['ws'][2][j])
+                    self.opti[i].set_value(self.M_prev[i][j], update_dict['ws'][1][j])
+                    self.opti[i].set_value(self.h_prev[i][j], update_dict['ws'][0][j])
                     # self.opti[i].set_initial(self.policy[i][2][j], update_dict['ws'][2][j])
-            for j in range(t_bar+(self.N_modes*N_TV)*(self.N-t_bar)):
-                self.opti[i].set_value(self.K_prev[i][j], np.zeros((2,2*N_TV)))
-                if 'ws' in update_dict.keys():
-                    self.opti[i].set_value(self.K_prev[i][j], update_dict['ws'][1][j])
-                    # self.opti[i].set_initial(self.policy[i][1][j], update_dict['ws'][1][j])
-            self.opti[i].set_value(self.h_prev[i], np.zeros((2,t_bar+(self.N_modes*N_TV)*(self.N-t_bar))))
-            if 'ws' in update_dict.keys():
-                self.opti[i].set_value(self.h_prev[i], update_dict['ws'][0])
-                # self.opti[i].set_initial(self.policy[i][0], update_dict['ws'][0])
+                    # self.opti[i].set_initial(self.policy[i][0], update_dict['ws'][0])
 
+                for k in range(N_TV):
+                    self.opti[i].set_value(self.K_prev[i][j][k], np.zeros((2*self.N,2*self.N)))
+                    if 'ws' in update_dict.keys():
+                        self.opti[i].set_value(self.K_prev[i][j][k], update_dict['ws'][2][j][k])
+                        # self.opti[i].set_initial(self.policy[i][1][j], update_dict['ws'][1][j])
+            
+            
+                
+                
         for j in range(self.N_modes):
             for k in range(N_TV):
                 # self.opti[i].set_initial(self.lmbd_dual_var[i][k][j],  0.5*ca.DM.ones(4,self.N))
@@ -1817,7 +1611,7 @@ class SMPC_MMPreds():
 
     def _update_previous_input(self, i, acc_prev, df_prev):
         self.opti[i].set_value(self.u_prev[i], [acc_prev, df_prev])
-class SMPC_MMPreds_OBCA():
+# class SMPC_MMPreds_OBCA():
 
     def __init__(self,
                 N            = 10,
