@@ -33,21 +33,21 @@ INTERSECTIONS.append([
 
 # Second intersection
 INTERSECTIONS.append([
-[[87.3, 5.5, 0], [115.0, 1.6, 0]],
+[[-350., 35.5, 90], [115.0, 35.5, 90]],
 [[96.3, -15.2, 90], [96.1, 14.1, 90]],
 [[115.5, -2.2, 180], [88.1, -5.1, 180]],
 [[106.7, 14.4, 270], [107.0, -13.7, 270]]
 ])
 
-INT_IND = 0 # which intersection to use, 0 or 1 atm.
-LAN_IND = 3 # which straight-line lane to consider, basically heading.
+INT_IND = 1 # which intersection to use, 0 or 1 atm.
+LAN_IND = 0 # which straight-line lane to consider, basically heading.
 
 EGO_START_LOCATION = (*INTERSECTIONS[INT_IND][LAN_IND][0][:-1], 1.5)
 EGO_END_LOCATION   = (*INTERSECTIONS[INT_IND][LAN_IND][1][:-1], 1.5)
 EGO_YAW            = INTERSECTIONS[INT_IND][LAN_IND][0][-1]
 
-TOWN_STR = "Town05"
-HOST = "127.0.0.1"
+TOWN_STR = "Town04"
+HOST = "localhost"
 PORT = 2000
 EGO_VEH_FILTER = "vehicle.lincoln.mkz2017"
 
@@ -68,6 +68,9 @@ try:
 	ego_vehicle = random.choice(bp_library.filter(EGO_VEH_FILTER))
 	ego_vehicle.set_attribute('role_name', 'hero')
 	ego_vehicle = world.spawn_actor(ego_vehicle, ego_transform)
+
+	camera_rgb = world.spawn_actor(bp_library.find('sensor.camera.rgb'),carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),attach_to=ego_vehicle)
+	# actor_list.append(camera_rgb)
 
 	time.sleep(5.)
 
