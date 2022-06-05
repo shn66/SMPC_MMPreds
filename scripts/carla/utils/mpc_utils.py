@@ -239,7 +239,7 @@ class SMPC_MMPreds():
                 N_TV_MAX     =  1,
                 N_seq_MAX    =  100,
                 T_BAR_MAX    =  6,
-                TIGHTENING   =  1.64,
+                TIGHTENING   =  1.6,
                 NOISE_STD    =  [0.1, .1, .01, .1, 0.1], # process noise standard deviations in order [w_x, w_y, w_theta, w_v, w_TV]
                 Q =[0.1*50., 0.001*50, 1*10., 0.1*10.], # weights on x, y, and v.
                 R = [10., 1000],       # weights on inputs
@@ -313,8 +313,8 @@ class SMPC_MMPreds():
         self.eval_oa=[]
 
 
-        # p_opts_grb = {'OutputFlag': 0, 'FeasibilityTol' : 1e-3, 'PSDTol' : 1e-3}
-        p_opts_grb = {'OutputFlag': 0}
+        p_opts_grb = {'OutputFlag': 0, 'FeasibilityTol' : 1e-3, 'PSDTol' : 1e-3}
+        # p_opts_grb = {'OutputFlag': 0}
         s_opts_grb = {'error_on_fail':0, 'verbose':1}
 
 
@@ -390,21 +390,21 @@ class SMPC_MMPreds():
 
         if t_bar == 0 or t_bar==self.N-1:
             M=[[[self.opti[i].variable(2, 4)] for n in range(t)] for t in range(self.N)]
-            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)]] for t in range(self.N-1)]
+            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)]] for t in range(self.N)]
             h=[[self.opti[i].variable(2, 1)] for t in range(self.N)]
 
             M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][0] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)])]
             h_stack=[ca.vertcat(*[h[t][0] for t in range(self.N)])]
-            K_stack=[[ca.diagcat(ca.DM(2,2),*[K[t][0][k] for t in range(self.N-1)]) for k in range(N_TV)]]
+            K_stack=[[ca.diagcat(*[K[t][0][k] for t in range(self.N)]) for k in range(N_TV)]]
 
         else:
             h=[[self.opti[i].variable(2,1) for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(self.N)]
             M=[[[self.opti[i].variable(2, 4) for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for j in range(t)] for t in range(self.N)]
-            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)] for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(1,self.N)]
+            K=[[[self.opti[i].variable(2,2) for k in range(N_TV)] for n in range(1+(-1+self.N_modes)*int(t>=t_bar))] for t in range(self.N)]
 
             M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][m*int(t>=t_bar)] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)]) for m in range(self.N_modes)]
             h_stack=[ca.vertcat(*[h[t][m*int(t>=t_bar)] for t in range(self.N)]) for m in range(self.N_modes)]
-            K_stack=[[ca.diagcat(ca.DM(2,2),*[K[t-1][m*int(t>=t_bar)][k] for t in range(1,self.N)]) for k in range(N_TV)] for m in range(self.N_modes)]
+            K_stack=[[ca.diagcat(*[K[t][m*int(t>=t_bar)][k] for t in range(self.N)]) for k in range(N_TV)] for m in range(self.N_modes)]
 
 
         return h_stack,M_stack,K_stack
@@ -452,17 +452,17 @@ class SMPC_MMPreds():
                         self.opti[i].set_value(self.y_tv_ref[i][k][j][0], y_tv0[k])
                         self.opti[i].set_value(T[k][j][t], np.identity(2))
                         self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-np.hstack((x_tv0[k],y_tv0[k])))
-                        e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
+                        e_val,e_vec= np.linalg.eigh(0.1*sigma_tv[k][j,t,:,:])
                         self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], e_vec@np.diag(np.sqrt(e_val))@e_vec.T)
                     else:
                         self.opti[i].set_value(self.x_tv_ref[i][k][j][t], mu_tv[k][j,t-1,0])
                         self.opti[i].set_value(self.y_tv_ref[i][k][j][t], mu_tv[k][j,t-1,1])
                         if t<self.N:
-                            e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
-                            e_valp,e_vecp= np.linalg.eigh(sigma_tv[k][j,t-1,:,:])
+                            e_val,e_vec= np.linalg.eigh(0.1*sigma_tv[k][j,t,:,:])
+                            e_valp,e_vecp= np.linalg.eigh(0.1*sigma_tv[k][j,t-1,:,:])
                             Ttv=e_vec@np.diag(np.sqrt(e_val))@e_vec.T@e_vecp@np.diag(np.sqrt(e_valp)**(-1))@e_vecp.T
 
-                            self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], ca.chol(sigma_tv[k][j,t,:,:]) )
+                            self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], ca.chol(0.1*sigma_tv[k][j,t,:,:]) )
                             self.opti[i].set_value(T[k][j][t], Ttv)
                             self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-Ttv@mu_tv[k][j, t-1, :])
 
@@ -546,7 +546,7 @@ class SMPC_MMPreds():
         [h,M,K]=self.policy[i]
 
         slack=self.slacks[i]
-        cost = 10*slack@slack
+        cost = 100*slack@slack
         x=0.5*(self.dz_curr[i][0]+self.x_lin[i][0]+self.x_lin[i][-1])
         y=0.5*(self.dz_curr[i][0]+self.y_lin[i][0]+self.y_lin[i][-1])
         self.opti[i].subject_to(slack>=0)
@@ -568,10 +568,10 @@ class SMPC_MMPreds():
                 for k in range(N_TV):
 
 
-                    z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(ca.horzcat(B_block[t*4:t*4+2,:]@M[0]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[0][l]@F_block[l][0][:2*self.N,:]-int(l==k)*F_block[k][0][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                    z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@self.Q_tv[i][k][0][t-1]@(ca.horzcat(B_block[t*4:t*4+2,:]@M[0]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[0][l]@F_block[l][0][:2*self.N,:]-int(l==k)*F_block[k][0][t*2:(t+1)*2,:] for l in range(N_TV)]))
 
-                    y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[0]-T_block[k][0][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][0][t*2:(t+1)*2,:])\
-                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]))
+                    y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@self.Q_tv[i][k][0][t-1]@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[0]-T_block[k][0][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][0][t*2:(t+1)*2,:])\
+                                                   +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t])).T@self.Q_tv[i][k][0][t-1]@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][0][t], self.y_tv_ref[i][k][0][t]))
 
                     soc_constr=ca.soc(self.tight*z,y)
 
@@ -628,10 +628,10 @@ class SMPC_MMPreds():
 
                         for k in range(N_TV):
 
-                            z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@(ca.horzcat(B_block[t*4:t*4+2,:]@M[j]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[j][l]@F_block[l][j][:2*self.N,:]-int(l==k)*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                            z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(ca.horzcat(B_block[t*4:t*4+2,:]@M[j]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[j][l]@F_block[l][j][:2*self.N,:]-int(l==k)*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))
 
-                            y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[j]-T_block[k][j][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][j][t*2:(t+1)*2,:])\
-                                                           +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t]))
+                            y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[j]-T_block[k][j][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][j][t*2:(t+1)*2,:])\
+                                                           +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(self.z_ref[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t]))
 
                             soc_constr=ca.soc(self.tight*z,y)
 
@@ -657,7 +657,7 @@ class SMPC_MMPreds():
                     nom_diff_u=ca.diff(h[j].reshape((2,self.N)),1,1).reshape((-1,1))/self.DT
 
                     cost+=RefTrajGenerator._quad_form(nom_z_ev, 10*cost_matrix_z)+\
-                          RefTrajGenerator._quad_form(h[j],ca.kron(ca.DM.eye(self.N),ca.diag([10, 10])))+\
+                          RefTrajGenerator._quad_form(h[j],ca.kron(ca.DM.eye(self.N),ca.diag([0, 0])))+\
                           RefTrajGenerator._quad_form(nom_z_diff,100*cost_matrix_z[:self.N*4,:self.N*4])+\
                           RefTrajGenerator._quad_form(nom_diff_u,10*cost_matrix_u)
                           #+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),1*ca.MX.eye(2)))
@@ -695,19 +695,19 @@ class SMPC_MMPreds():
         st = time.time()
 
         try:
-            pdb.set_trace()
+            # pdb.set_trace()
             sol = self.opti[i].solve()
 
             # Optimal solution.
             u_control  = sol.value(self.policy[i][0][0][:2,0])
             v_tp1      = sol.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0][0,0])
             is_feas     = True
-
+            # print(sol.value(self.slacks[i]))
             z_lin_ev   = sol.value(self.z_lin[i])
             u_lin_ev   = sol.value(self.u_lin[i])
             z_ref_ev   = sol.value(self.z_ref[i])
 
-            nom_z_ev   = [sol.value(x).reshape((4,-1))+z_lin_ev[:,1:] for x in self.nom_z_ev[i]]
+            nom_z_ev   = [sol.value(x).reshape((4,-1))+z_lin_ev[:,:] for x in self.nom_z_ev[i]]
             nom_u_ev   = [sol.value(x)+u_lin_ev[:,:-1] for x in self.nom_u_ev[i]]
 
             z_tv_ref    = np.array([sol.value(self.x_tv_ref[i][0][0]), sol.value(self.y_tv_ref[i][0][0])])
@@ -728,7 +728,7 @@ class SMPC_MMPreds():
                 u_lin_ev   = self.opti[i].debug.value(self.u_lin[i])
                 z_ref_ev   = self.opti[i].debug.value(self.z_ref[i])
 
-                nom_z_ev   = [self.opti[i].debug.value(x).reshape((4,-1))+z_lin_ev[:,1:] for x in self.nom_z_ev[i]]
+                nom_z_ev   = [self.opti[i].debug.value(x).reshape((4,-1))+z_lin_ev[:,:] for x in self.nom_z_ev[i]]
                 nom_u_ev   = [self.opti[i].debug.value(x)+u_lin_ev[:,:-1] for x in self.nom_u_ev[i]]
 
                 z_tv_ref    = np.array([self.opti[i].debug.value(self.x_tv_ref[i][0][0]), self.opti[i].debug.value(self.y_tv_ref[i][0][0])])
@@ -789,7 +789,7 @@ class SMPC_MMPreds():
 
     def _update_ev_rotated_costs(self, i, Rs_ev):
         for t in range(self.N):
-            self.opti[i].set_value(self.rot_costs[i][t], ca.diagcat(Rs_ev[t].T@self.Q[:2,:2]@Rs_ev[t], self.Q[2:,2:]))
+            self.opti[i].set_value(self.rot_costs[i][t], ca.diagcat(Rs_ev[t]@self.Q[:2,:2]@Rs_ev[t].T, self.Q[2:,2:]))
 
 
 

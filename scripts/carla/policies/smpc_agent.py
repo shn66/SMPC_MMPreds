@@ -406,6 +406,7 @@ class SMPCAgent(object):
             print(f"\toptimal?: {is_opt}")
             print(f"\tv_next: {v_next}")
             print(f"\tsteering: {u0[1]}")
+
             # print(f"\tsolve time: {solve_time}")
             # print(f"\t scaled distance_x: {np.sqrt(scaled_distance)}")
             # print(self.t_ref, self.time)
