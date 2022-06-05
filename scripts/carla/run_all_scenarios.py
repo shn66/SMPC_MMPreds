@@ -110,8 +110,8 @@ if __name__ == '__main__':
             # break
             # Run all ego policy options with target vehicles.
             # for ego_policy_config in ["blsmpc", "smpc_open_loop", "smpc_no_switch"]:
-            # for ego_policy_config in ["smpc_no_switch_OAinner", "smpc_no_switch"]:
-            for ego_policy_config in ["smpc_no_switch_1_obca", "smpc_no_switch_2_obca", "smpc_no_switch_3_obca"]:
+            for ego_policy_config in ["smpc_no_switch"]:
+            # for ego_policy_config in ["smpc_no_switch_1_obca", "smpc_no_switch_2_obca", "smpc_no_switch_3_obca"]:
             # # for ego_policy_config in ["smpc_no_switch_2_obca"]:
             # # for ego_policy_config in ["smpc_no_switch_OAinner"]:
               savedir = os.path.join( results_folder,
