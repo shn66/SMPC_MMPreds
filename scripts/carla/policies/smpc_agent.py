@@ -87,35 +87,35 @@ class SMPCAgent(object):
 
         self.warm_start={}
 
-        ## Debugging: see the reference solution.
+        # Debugging: see the reference solution.
 
-        # plt.subplot(411)
-        # # import pdb; pdb.set_trace()
-        # plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,0], 'r')
+        plt.subplot(411)
+        # import pdb; pdb.set_trace()
+        plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
+        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],0], 'r')
 
-        # plt.ylabel('x')
-        # plt.subplot(412)
-        # plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,1], 'r')
-        # plt.ylabel('y')
-        # plt.subplot(413)
-        # plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,2], 'r')
-        # plt.ylabel('yaw')
-        # plt.subplot(414)
-        # plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,3], 'r')
-        # plt.ylabel('v')
+        plt.ylabel('x')
+        plt.subplot(412)
+        plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
+        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],1], 'r')
+        plt.ylabel('y')
+        plt.subplot(413)
+        plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
+        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],2], 'r')
+        plt.ylabel('yaw')
+        plt.subplot(414)
+        plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
+        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],3], 'r')
+        plt.ylabel('v')
 
-        # plt.figure()
-        # plt.subplot(211)
-        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:,0])
-        # plt.ylabel('acc')
-        # plt.subplot(212)
-        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:,1])
-        # plt.ylabel('df')
-        # plt.show()
+        plt.figure()
+        plt.subplot(211)
+        plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,0])
+        plt.ylabel('acc')
+        plt.subplot(212)
+        plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,1])
+        plt.ylabel('df')
+        plt.show()
 
         # MPC initialization (might take a while....)
         if not self.ol_flag:
@@ -177,7 +177,7 @@ class SMPCAgent(object):
             way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
             self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
             self.nominal_speed = self.nominal_speed_mps
-            self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
+            self.lat_accel_max = 2. # maximum lateral acceleration (m/s^2), for slowing down at turns
 
             self.fit_velocity_profile()
 
@@ -321,7 +321,7 @@ class SMPCAgent(object):
             Rs_ev=[np.array([[np.cos(l_states[t,2]),np.sin(l_states[t,2])],[-np.sin(l_states[t,2]), np.cos(l_states[t,2])]]) for t in range(1,self.N+1)]
 
 
-            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
+            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[k][0][j,:,1]), np.diff(target_vehicle_gmm_preds[k][0][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
             tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
             if self.OA_inner_approx:
                 tv_Q=np.array([[1./(3.6+self.d_min)**2, 0.],[0., 1./(1.2+self.d_min)**2]])
@@ -355,7 +355,7 @@ class SMPCAgent(object):
                          'v_lin': l_states[:,3].T ,
                          'a_lin': l_inputs[:,0].T ,
                          'df_lin': l_inputs[:,1].T,
-                         'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices, 'Rs_ev': Rs_ev }
+                         'mus'  : [target_vehicle_gmm_preds[k][0] for k in range(N_TV)],     'sigmas' : [target_vehicle_gmm_preds[k][1] for k in range(N_TV)], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices, 'Rs_ev': Rs_ev }
 
 
 
@@ -378,8 +378,8 @@ class SMPCAgent(object):
             else:
 
 
-                t_bar=5
-                i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
+                t_bar=4
+                i=(N_TV-1)*(self.SMPC.t_bar_max)+t_bar
                 self.SMPC.update(i, update_dict)
                 sol_dict=self.SMPC.solve(i)
 

@@ -3,7 +3,8 @@ import glob
 import json
 import pdb
 
-from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
+# from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
+from scenarios.run_lk_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunLKScenario
 
 def run_without_tvs(scenario_dict, ego_init_dict, savedir):
     carla_params     = CarlaParams(**scenario_dict["carla_params"])
@@ -56,8 +57,8 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
     for vp_dict in scenario_dict["vehicle_params"]:
         if vp_dict["role"] == "static":
             # Not generating static vehicles
-            # vehicles_params_list.append( VehicleParams(**vp_dict) )
-            continue
+            vehicles_params_list.append( VehicleParams(**vp_dict) )
+            # continue
         elif vp_dict["role"] == "target":
             vehicles_params_list.append( VehicleParams(**vp_dict) )
         elif vp_dict["role"] == "ego":
@@ -69,7 +70,12 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 
             raise ValueError(f"Invalid vehicle role: {vp_dict['role']}")
 
-    runner = RunIntersectionScenario(carla_params,
+    # runner = RunIntersectionScenario(carla_params,
+    #                                  drone_viz_params,
+    #                                  vehicles_params_list,
+    #                                  pred_params,
+    #                                  savedir)
+    runner = RunLKScenario(carla_params,
                                      drone_viz_params,
                                      vehicles_params_list,
                                      pred_params,
@@ -79,17 +85,17 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 if __name__ == '__main__':
     scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
     # scenarios_list = sorted(glob.glob(scenario_folder + "scenario_*.json"))
-    scenarios_list = glob.glob(scenario_folder + "scenario_01.json")
+    scenarios_list = glob.glob(scenario_folder + "scenario_lk.json")
     results_folder = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results" )
 
     for scenario in scenarios_list:
         # Load the scenario and generate parameters.
         scenario_dict = json.load(open(scenario, "r"))
         scenario_name = scenario.split("/")[-1].split('.json')[0]
-        inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/inits/" )
-        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
-        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
-
+        inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
+        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
+        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_lk.json"))
+        # pdb.set_trace()
 
         # ego_init_list = [glob.glob(inits_folder + "ego_init_09.json")[0], glob.glob(inits_folder + "ego_init_10.json")[0]]
         # ego_init_list = sorted(scenario_dict["ego_init_jsons"])

@@ -471,16 +471,16 @@ class RunIntersectionScenario:
         self.b_world_to_drone = np.array([ 960., 1116.])
 
         # This is like a top down view of the intersection.  Can tune later.
-        # cam_loc = carla.Location(x=drone_viz_params.x,
-        #                          y=drone_viz_params.y,
-        #                          z=drone_viz_params.z)
-        cam_loc = carla.Location(x=-10.,
-                                 y=0.,
-                                 z=10.)
-        # cam_ori = carla.Rotation(roll=drone_viz_params.roll,
-        #                          pitch=drone_viz_params.pitch,
-        #                          yaw=drone_viz_params.yaw)
-        cam_ori = carla.Rotation(pitch=-15)
+        cam_loc = carla.Location(x=drone_viz_params.x,
+                                 y=drone_viz_params.y,
+                                 z=drone_viz_params.z)
+        # cam_loc = carla.Location(x=-10.,
+        #                          y=0.,
+        #                          z=10.)
+        cam_ori = carla.Rotation(roll=drone_viz_params.roll,
+                                 pitch=drone_viz_params.pitch,
+                                 yaw=drone_viz_params.yaw)
+        # cam_ori = carla.Rotation(pitch=-15)
 
         cam_transform = carla.Transform(cam_loc, cam_ori)
 
@@ -489,7 +489,7 @@ class RunIntersectionScenario:
         bp_drone.set_attribute('fov', str(drone_viz_params.fov))
         bp_drone.set_attribute('role_name', 'drone')
 
-        self.drone = self.world.spawn_actor(bp_drone, cam_transform, attach_to=self.vehicle_actors[self.ego_vehicle_idx])
+        self.drone = self.world.spawn_actor(bp_drone, cam_transform)
 
     def _setup_vehicles(self, vehicle_params_list, carla_params):
         intersection_fname = os.path.join( os.path.dirname(os.path.abspath(__file__)),

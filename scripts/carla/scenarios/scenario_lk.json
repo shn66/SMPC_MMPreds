@@ -10,17 +10,17 @@
 		"z"                  :  10.0,
 		"visualize_opencv"   : true,
 		"save_avi"           : false,
-		"overlay_gmm"        : true,
+		"overlay_gmm"        : false,
 		"overlay_ego_info"   : true,
 		"overlay_mode_probs" : false,
-		"overlay_traj_hist"  : true
+		"overlay_traj_hist"  : false
 	},
 	"ego_init_jsons" : [
-		"ego_init_lk.json",
+		"ego_init_lk.json"
 	],
 	"vehicle_params" : [
 		{
-			"role"                        : "target",
+			"role"                        : "static",
 			"vehicle_type"                : "vehicle.mercedes-benz.coupe",
 			"vehicle_color"               : "246, 246, 246",
 			"policy_type"                 : "static",
@@ -28,10 +28,10 @@
 			"intersection_goal_node_idx"  : 0,
 			"start_left_offset"           : 1.5,
 			"goal_left_offset"            : 2.0,
-			"start_longitudinal_offset"   : 15.0,
+			"start_longitudinal_offset"   : 45.0,
 			"goal_longitudinal_offset"    : 20.0,
-			"nominal_speed"               : 11.0,
-			"init_speed"                  : 12.0
+			"nominal_speed"               : 12.0,
+			"init_speed"                  : 13.0
 		},
 		{
 			"role"                        : "target",
@@ -42,8 +42,8 @@
 			"intersection_goal_node_idx"  :     0,
 			"start_left_offset"           :   7.0,
 			"goal_left_offset"            :   7.0,
-			"start_longitudinal_offset"   : -15.0,
-			"goal_longitudinal_offset"    :  20.0,
+			"start_longitudinal_offset"   : -10.0,
+			"goal_longitudinal_offset"    :  0.0,
 			"nominal_speed"               :  10.0,
 			"init_speed"                  :  13.0
 		},
@@ -55,7 +55,7 @@
 			"intersection_goal_node_idx"  :    0,
 			"start_left_offset"           :  0.0,
 			"goal_left_offset"            :  7.0,
-			"goal_longitudinal_offset"    : 0.0,
+			"goal_longitudinal_offset"    : 20.0,
 			"nominal_speed"               : 13.0
 		}
 	]

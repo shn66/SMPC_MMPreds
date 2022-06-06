@@ -56,10 +56,10 @@ class DroneVizParams:
     # By default, this represents a top down view.
     # XY must be specified, as it varies with the choice of intersection.
     x          : float
-    y          : float
-    z          : float =  50.
+    z          : float
+    y          : float =   0.
     roll       : float =   0.
-    pitch      : float = -90.
+    pitch      : float =  -15.
     yaw        : float =   0.
     img_width  : int   = 1920
     img_height : int   = 1080
@@ -94,7 +94,7 @@ class VehicleParams:
     # General MPC parameters.  Some of these can be ignored (e.g. n_modes if using MPCAgent).
     N         : int   = 10  # horizon of the MPC solution
     dt        : float = 0.2 # timestep of the discretization used (s)
-    num_modes : int   = 1   # number of GMM modes considered by MPC (prioritizing most probable ones first)
+    num_modes : int   = 2   # number of GMM modes considered by MPC (prioritizing most probable ones first)
 
     # SMPC specific parameters (ignored for any other policy_type).
     smpc_config : str = "full" # "full", "open_loop", "no_switch"
@@ -131,7 +131,7 @@ def load_intersection(intersection_csv):
 
 def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
     if vehicle_params.policy_type == "static":
-        return StaticAgent(vehicle_actor, goal_transform.location)
+        return StaticAgent(vehicle_actor, goal_transform.location, nominal_speed_mps=vehicle_params.nominal_speed)
     elif vehicle_params.policy_type == "mpc":
         return MPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
@@ -197,9 +197,8 @@ def get_intersection_transform(intersection, vehicle_params, endpoint_str, spawn
     yaw_rad = np.radians(float(yaw_deg))
 
     # Translate the pose given the longitudinal offset.
-    x += longitudinal_offset * np.cos(yaw_rad)
-    y += longitudinal_offset * np.sin(yaw_rad)
-
+    x+=longitudinal_offset*np.cos(yaw_rad)
+    y+=longitudinal_offset*np.sin(yaw_rad)
     # Translate the pose given the lateral/left offset.
     left_dir_yaw = yaw_rad - np.pi/2.
     x += left_offset * np.cos( left_dir_yaw )
@@ -208,6 +207,7 @@ def get_intersection_transform(intersection, vehicle_params, endpoint_str, spawn
     # Make the Carla transform.
     loc = carla.Location(x = x, y = y, z = spawn_height)
     rot = carla.Rotation(yaw=yaw_deg)
+
     return carla.Transform(loc, rot)
 
 def transform_to_local_frame(motion_hist_array):
@@ -260,7 +260,7 @@ def get_target_agent_history(agent_history, target_agent_id):
 """
 Main class to simulate and run parametrized scenarios.
 """
-class RunIntersectionScenario:
+class RunLKScenario:
     def __init__(self,
                  carla_params        : CarlaParams,
                  drone_viz_params    : DroneVizParams,
@@ -437,11 +437,18 @@ class RunIntersectionScenario:
             curr_target_vehicle_position = R_target_to_world @ past_states_tv[-1, 1:3] + t_target_to_world
             tvs_positions = [curr_target_vehicle_position]
 
+            static_agent_id = self.vehicle_actors[self.static_vehicle_idxs[0]].id
+            past_states_static, R_static_to_world, t_static_to_world = \
+                get_target_agent_history(self.agent_history, static_agent_id)
+
+            curr_static_vehicle_position = R_static_to_world @ past_states_static[-1, 1:3] + t_static_to_world
+            tvs_positions.append(curr_static_vehicle_position)
+
             if np.any(np.isnan(past_states_tv)):
                 # Not enough data for predictions to be made.
                 tvs_mode_probs = [ np.ones(self.ego_num_modes) / self.ego_num_modes ]
-                tvs_mode_dists = [[np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes)],
-                                  [np.stack([[0.1*np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
+                tvs_mode_dists = [[np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes),
+                                  np.stack([[0.1*np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
                 tvs_valid_pred = [False]
             else:
                 img_tv = self.rasterizer.rasterize(self.agent_history, target_agent_id)
@@ -450,8 +457,24 @@ class RunIntersectionScenario:
                 gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(self.ego_num_modes)
 
                 tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
-                tvs_mode_dists = [[gmm_pred_tv.mus[:, :self.ego_N, :]], [gmm_pred_tv.sigmas[:, :self.ego_N, :, :]]]
+                tvs_mode_dists = [[gmm_pred_tv.mus[:, :self.ego_N, :], gmm_pred_tv.sigmas[:, :self.ego_N, :, :]]]
                 tvs_valid_pred = [True]
+
+            if np.any(np.isnan(past_states_static)):
+                # Not enough data for predictions to be made.
+                tvs_mode_probs.append( np.ones(self.ego_num_modes) / self.ego_num_modes )
+                tvs_mode_dists.append([np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes),
+                                  np.stack([[0.1*np.identity(2)]*self.ego_N]*self.ego_num_modes)])
+                tvs_valid_pred.append(False)
+            else:
+                img_tv = self.rasterizer.rasterize(self.agent_history, static_agent_id)
+                gmm_pred_static = self.pred_model.predict_instance(img_tv, past_states_static[:-1])
+                gmm_pred_static.transform(R_static_to_world, t_static_to_world)
+                gmm_pred_static=gmm_pred_static.get_top_k_GMM(self.ego_num_modes)
+
+                tvs_mode_probs.append(gmm_pred_static.mode_probabilities)
+                tvs_mode_dists.append([gmm_pred_tv.mus[:, :self.ego_N, :], gmm_pred_tv.sigmas[:, :self.ego_N, :, :]])
+                tvs_valid_pred.append(True)
 
         return tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred
 
@@ -471,12 +494,17 @@ class RunIntersectionScenario:
         self.b_world_to_drone = np.array([ 960., 1116.])
 
         # This is like a top down view of the intersection.  Can tune later.
-        cam_loc = carla.Location(x=drone_viz_params.x,
-                                 y=drone_viz_params.y,
-                                 z=drone_viz_params.z)
-        cam_ori = carla.Rotation(roll=drone_viz_params.roll,
-                                 pitch=drone_viz_params.pitch,
-                                 yaw=drone_viz_params.yaw)
+        # cam_loc = carla.Location(x=drone_viz_params.x,
+        #                          y=drone_viz_params.y,
+        #                          z=drone_viz_params.z)
+        # cam_ori = carla.Rotation(roll=drone_viz_params.roll,
+        #                  pitch=drone_viz_params.pitch,
+        #                  yaw=drone_viz_params.yaw)
+        cam_loc = carla.Location(x=-40.,
+                                 y=0.,
+                                 z=20.)
+        cam_ori = carla.Rotation(pitch=-15)
+
         cam_transform = carla.Transform(cam_loc, cam_ori)
 
         bp_drone.set_attribute('image_size_x', str(drone_viz_params.img_width))
@@ -484,7 +512,7 @@ class RunIntersectionScenario:
         bp_drone.set_attribute('fov', str(drone_viz_params.fov))
         bp_drone.set_attribute('role_name', 'drone')
 
-        self.drone = self.world.spawn_actor(bp_drone, cam_transform)
+        self.drone = self.world.spawn_actor(bp_drone, cam_transform, attach_to=self.vehicle_actors[self.tv_vehicle_idxs[0]])
 
     def _setup_vehicles(self, vehicle_params_list, carla_params):
         intersection_fname = os.path.join( os.path.dirname(os.path.abspath(__file__)),
@@ -498,6 +526,7 @@ class RunIntersectionScenario:
         self.vehicle_init_speeds = []
         ego_vehicle_idxs  = []
         tv_vehicle_idxs   = []
+        static_vehicle_idxs   = []
 
         for idx, vp in enumerate(vehicle_params_list):
             veh_bp = bp_library.find(vp.vehicle_type)
@@ -508,7 +537,8 @@ class RunIntersectionScenario:
             if vp.role == "ego":
                 ego_vehicle_idxs.append(idx)
             elif vp.role == "static":
-                pass
+                # pass
+                static_vehicle_idxs.append(idx)
             elif vp.role == "target":
                 tv_vehicle_idxs.append(idx)
             else:
@@ -532,6 +562,7 @@ class RunIntersectionScenario:
 
         # Note: this can be empty, as checked in the _make_predictions code.
         self.tv_vehicle_idxs = tv_vehicle_idxs
+        self.static_vehicle_idxs = static_vehicle_idxs
 
     def _setup_predictions(self, prediction_params):
         self.agent_history = AgentHistory(self.world.get_actors())
