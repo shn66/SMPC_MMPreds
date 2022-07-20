@@ -35,7 +35,7 @@ class SMPCAgent(object):
                  nominal_speed_mps =8.0, # sets desired speed (m/s) for tracking path
                  dt =0.2,
                  N=8,                   # time discretization (s) used to generate a reference
-                 N_modes = 3,
+                 N_modes = 2,
                  smpc_config = "full",
                  OAIA=False,
                  obca=False,
@@ -56,7 +56,7 @@ class SMPCAgent(object):
         self.time=0
         self.t_ref=0
         self.fps=fps
-        self.d_min=2.0
+        self.d_min=1.0
 
         self.OA_inner_approx=OAIA
 
@@ -175,7 +175,7 @@ class SMPCAgent(object):
             # # Generate a refernece by fitting a velocity profile with specified nominal speed and time discretization.
 
             way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
-            self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
+            self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=1.)
             self.nominal_speed = self.nominal_speed_mps
             self.lat_accel_max = 2. # maximum lateral acceleration (m/s^2), for slowing down at turns
 
@@ -208,6 +208,8 @@ class SMPCAgent(object):
             self.ref_dict={'x_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,0], 'y_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,1], 'psi_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,2], 'v_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,3],
                             'x0'  : x,  'y0'  : y,  'psi0'  : psi,  'v0'  : speed, 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
             self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
+            self.ref_dict['warm_start']={'z_ws': np.vstack((np.array([[x,y,psi,speed]]),self.feas_ref_states[self.t_ref+1:self.ref_horizon,:])),
+                                         'u_ws': np.array([[self.control_prev[0],self.control_prev[1]]]*self.feas_ref_gen.N) }
             self.feas_ref_gen.update(self.ref_dict)
             self.feas_ref_dict=self.feas_ref_gen.solve()
             self.feas_ref_states_new=self.feas_ref_dict['z_opt']
@@ -327,7 +329,7 @@ class SMPCAgent(object):
                 tv_Q=np.array([[1./(3.6+self.d_min)**2, 0.],[0., 1./(1.2+self.d_min)**2]])
                 tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
             elif not self.obca_flag:
-                v_Q=np.array([[1./(2.6)**2, 0.],[0., 1./(1.45)**2]])
+                v_Q=np.array([[1./(2.)**2, 0.],[0., 1./(1.15)**2]])
                 tv_shape_matrices=[[[ np.identity(2) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
                 for k in range(N_TV):
                     for j in range(self.N_modes):

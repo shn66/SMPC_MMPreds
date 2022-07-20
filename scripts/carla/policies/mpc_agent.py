@@ -58,6 +58,26 @@ class MPCAgent(object):
         self._low_level_control = LowLevelControl(vehicle)
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
         self.counter = 0
+        # plt.subplot(411)
+        # # import pdb; pdb.set_trace()
+        # plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
+
+
+        # plt.ylabel('x')
+        # plt.subplot(412)
+        # plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
+
+        # plt.ylabel('y')
+        # plt.subplot(413)
+        # plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
+
+        # plt.ylabel('yaw')
+        # plt.subplot(414)
+        # plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
+
+        # plt.ylabel('v')
+
+        # plt.show()
 
     def done(self):
         return self.goal_reached
@@ -278,7 +298,7 @@ class MPCAgent(object):
                    DT         =  0.2,   # discretization time between timesteps (s)
                    N_PRED_TV  =    3,   # timesteps for target vehicle prediction
                    NUM_TVS    =    5,   # maximum number of target vehicles to avoid
-                   D_MIN      =  0.5,  # square of minimum 2-norm distance to a target vehicle
+                   D_MIN      =  1.,  # square of minimum 2-norm distance to a target vehicle
                    L_F        =  1.5,   # distance from CoG to front axle (m) [guesstimate]
                    L_R        =  1.5,   # distance from CoG to rear axle (m) [guesstimate]
                    V_MIN      =  0.0,   # min/max velocity constraint (m/s)
@@ -292,7 +312,7 @@ class MPCAgent(object):
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 1000,      # weights for slack on collision avoidance (norm constraint).
-                   Q = [1., 1., 50., 0.1], # weights on x, y, and v.
+                   Q = [10., 10., 500., 0.1], # weights on x, y, and v.
                    R = [100., 1000.],
                    fps=20):
                    # Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
@@ -339,7 +359,7 @@ class MPCAgent(object):
         self.sl_df_dv  = self.sl_dv[:,1]
 
         self.sl_obst_dv = self.opti.variable(self.N_PRED_TV) # slack variable for obstacle avoidance
-        self.S=casadi.DM([[(3+self.D_MIN)**(-2), 0.],[0., (1+self.D_MIN)**(-2)]])
+        self.S=casadi.DM([[(1+self.D_MIN)**(-2), 0.],[0., (1+self.D_MIN)**(-2)]])
 
         self._add_agent_constraints()
         self._add_obstacle_avoidance_constraints()
@@ -359,7 +379,7 @@ class MPCAgent(object):
         tv_Rs_fake   =  [[np.identity(2)]*self.N_PRED_TV]*self.NUM_TVS
         self._update_obstacles(tv_refs_fake, tv_Rs_fake)
 
-        self.opti.solver("ipopt", {"expand": False}, {"max_cpu_time": 0.1, "print_level": 0})
+        self.opti.solver("ipopt", {"expand": False, "verbose":False}, {'sb':'yes', "max_cpu_time": 0.2, "print_level": 0})
 
         sol = self._solve()
 

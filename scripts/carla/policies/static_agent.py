@@ -52,8 +52,11 @@ class StaticAgent(object):
         planner.setup()
 
         # Get the high-level route using Carla's API (basically A* search over road segments).
-        init_waypoint = carla_map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
-        goal          = carla_map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
+        # init_waypoint = carla_map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=(carla.LaneType.Driving))
+        # goal          = carla_map.get_waypoint(goal_location, project_to_road=True, lane_type=(carla.LaneType.Driving))
+        init_waypoint = carla_map.get_waypoint(self.vehicle.get_location(), project_to_road=True)
+        goal          = carla_map.get_waypoint(goal_location, project_to_road=True)
+
         route = planner.trace_route(init_waypoint.transform.location, goal.transform.location)
 
         # Convert the high-level route into a path parametrized by arclength distance s (i.e. Frenet frame).
@@ -65,7 +68,7 @@ class StaticAgent(object):
         self.lat_accel_max = 2.0  # m/s^2
 
         self.lf, self.lr = vehicle_name_to_lf_lr(self.vehicle.type_id)
-        self._setup_ref(N=5, DT=dt, L_F=self.lf, L_R=self.lr)
+        self._setup_ref(N=10, DT=dt, L_F=self.lf, L_R=self.lr)
 
 
         self._fit_velocity_profile()
@@ -73,6 +76,27 @@ class StaticAgent(object):
         self._low_level_control = LowLevelControl(vehicle)
         self.goal_reached = False # flags when the end of the path is reached and agent should stop
         self.counter = 0
+
+        # plt.subplot(411)
+        # # import pdb; pdb.set_trace()
+        # plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
+
+
+        # plt.ylabel('x')
+        # plt.subplot(412)
+        # plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
+
+        # plt.ylabel('y')
+        # plt.subplot(413)
+        # plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
+
+        # plt.ylabel('yaw')
+        # plt.subplot(414)
+        # plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
+
+        # plt.ylabel('v')
+
+        # plt.show()
 
     def done(self):
         return self.goal_reached
@@ -228,8 +252,8 @@ class StaticAgent(object):
                    A_DOT_MAX  =  1.5,
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
-                   Q = [1., 1., 50., 0.1], # weights on x, y, and v.
-                   R = [100., 1000.],
+                   Q = [1., .1, 100., 0.1], # weights on x, y, and v.
+                   R = [100., 5000.],
                    fps=20):
                    # Q = [1., 1., 10., 0.1], # weights on x, y, psi, and v.
                    # R = [10., 100.]):       # weights on jerk and slew rate (steering angle derivative)
@@ -292,7 +316,7 @@ class StaticAgent(object):
         # tv_Rs_fake   =  [[np.identity(2)]*self.N_PRED_TV]*self.NUM_TVS
         # self._update_obstacles(tv_refs_fake, tv_Rs_fake)
 
-        self.opti.solver("ipopt", {"expand": False}, {"max_cpu_time": 0.1, "print_level": 0})
+        self.opti.solver("ipopt", {"expand": False, 'verbose':False}, {"max_cpu_time": 0.5, "print_level": 0, 'sb':'yes'})
 
         sol = self._solve()
 

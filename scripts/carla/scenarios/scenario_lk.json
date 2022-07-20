@@ -6,13 +6,13 @@
 		"intersection_csv_loc" : "lk.csv"
 	},
 	"drone_viz_params" : {
-		"x"                  : -10.0,
+		"x"                  : -30.0,
 		"z"                  :  10.0,
 		"visualize_opencv"   : true,
-		"save_avi"           : false,
-		"overlay_gmm"        : false,
+		"save_avi"           : true,
+		"overlay_gmm"        : true,
 		"overlay_ego_info"   : true,
-		"overlay_mode_probs" : false,
+		"overlay_mode_probs" : true,
 		"overlay_traj_hist"  : false
 	},
 	"ego_init_jsons" : [
@@ -26,12 +26,12 @@
 			"policy_type"                 : "static",
 			"intersection_start_node_idx" : 0,
 			"intersection_goal_node_idx"  : 0,
-			"start_left_offset"           : 1.5,
-			"goal_left_offset"            : 2.0,
-			"start_longitudinal_offset"   : 45.0,
-			"goal_longitudinal_offset"    : 20.0,
-			"nominal_speed"               : 12.0,
-			"init_speed"                  : 13.0
+			"start_left_offset"           : 1.0,
+			"goal_left_offset"            : 1.5,
+			"start_longitudinal_offset"   : 8.0,
+			"goal_longitudinal_offset"    : 25.0,
+			"nominal_speed"               : 10.0,
+			"init_speed"                  : 14.0
 		},
 		{
 			"role"                        : "target",
@@ -40,12 +40,12 @@
 			"policy_type"                 : "mpc",
 			"intersection_start_node_idx" :     0,
 			"intersection_goal_node_idx"  :     0,
-			"start_left_offset"           :   7.0,
-			"goal_left_offset"            :   7.0,
+			"start_left_offset"           :   6.0,
+			"goal_left_offset"            :   6.0,
 			"start_longitudinal_offset"   : -10.0,
-			"goal_longitudinal_offset"    :  0.0,
-			"nominal_speed"               :  10.0,
-			"init_speed"                  :  13.0
+			"goal_longitudinal_offset"    :  5.0,
+			"nominal_speed"               :  11.0,
+			"init_speed"                  :  14.0
 		},
 		{
 			"role"                        : "ego",
@@ -54,8 +54,8 @@
 			"intersection_start_node_idx" :    0,
 			"intersection_goal_node_idx"  :    0,
 			"start_left_offset"           :  0.0,
-			"goal_left_offset"            :  7.0,
-			"goal_longitudinal_offset"    : 20.0,
+			"goal_left_offset"            :  6.5,
+			"goal_longitudinal_offset"    : 25.0,
 			"nominal_speed"               : 13.0
 		}
 	]

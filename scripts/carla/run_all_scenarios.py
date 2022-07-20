@@ -85,7 +85,8 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 if __name__ == '__main__':
     scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
     # scenarios_list = sorted(glob.glob(scenario_folder + "scenario_*.json"))
-    scenarios_list = glob.glob(scenario_folder + "scenario_lk.json")
+    # scenarios_list = glob.glob(scenario_folder + "scenario_lk.json")
+    scenarios_list = glob.glob(scenario_folder + "scenario_lk2.json")
     results_folder = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results" )
 
     for scenario in scenarios_list:

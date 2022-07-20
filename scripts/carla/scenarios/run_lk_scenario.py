@@ -4,7 +4,7 @@ from typing import List
 import carla
 import os
 import sys
-
+import pdb
 import cv2
 import numpy as np
 import random
@@ -20,6 +20,7 @@ from examples.synchronous_mode import CarlaSyncMode
 
 scriptdir = os.path.abspath(__file__).split('carla')[0] + 'carla/'
 sys.path.append(scriptdir)
+
 from policies.static_agent import StaticAgent
 from policies.smpc_agent import SMPCAgent
 from policies.mpc_agent import MPCAgent
@@ -59,7 +60,7 @@ class DroneVizParams:
     z          : float
     y          : float =   0.
     roll       : float =   0.
-    pitch      : float =  -15.
+    pitch      : float =  -90.
     yaw        : float =   0.
     img_width  : int   = 1920
     img_height : int   = 1080
@@ -172,7 +173,7 @@ def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
     else:
         raise ValueError(f"Unsupported policy type: {vehicle_params.policy_type}")
 
-def get_intersection_transform(intersection, vehicle_params, endpoint_str, spawn_height=1.0):
+def get_intersection_transform(intersection, vehicle_params, endpoint_str, spawn_height=2.0):
     node_idx            = None
     endpoint_idx        = None
     left_offset         = None
@@ -207,7 +208,7 @@ def get_intersection_transform(intersection, vehicle_params, endpoint_str, spawn
     # Make the Carla transform.
     loc = carla.Location(x = x, y = y, z = spawn_height)
     rot = carla.Rotation(yaw=yaw_deg)
-
+    # import pdb; pdb.set_trace()
     return carla.Transform(loc, rot)
 
 def transform_to_local_frame(motion_hist_array):
@@ -287,7 +288,8 @@ class RunLKScenario:
 
         # Needed for OpenCV/Carla world visualization.
         self.viz_params = drone_viz_params
-        self.mode_rgb_colors = [(255, 0, 255), (255, 255, 0), (0, 255, 255)] # TODO: autogenerate
+        # self.mode_rgb_colors = [(255, 0, 255), (255, 255, 0)]#, (0, 255, 255)] # TODO: autogenerate
+        self.mode_rgb_colors = [(255, 0, 255), (0,255, 255)]
 
     def run_scenario(self):
         # Return flag to indicate if this ran to completion.
@@ -321,9 +323,9 @@ class RunLKScenario:
                     carla_vel = carla.Vector3D(x=init_speed*np.cos(np.radians(yaw_carla)) ,
                                                y=init_speed*np.sin(np.radians(yaw_carla)) ,
                                                z=0.)
-                    veh_actor.set_target_velocity(carla_vel)
+                    veh_actor.set_velocity(carla_vel)
 
-                for _ in range(2):
+                for _ in range(1):
                     sync_mode.tick(timeout=self.timeout)
 
                 # Loop until all vehicles have reached their goal or we've exceeded self.max_iters.
@@ -338,6 +340,12 @@ class RunLKScenario:
                     # Run policies for each agent.
                     t_elapsed = snap.elapsed_seconds
                     completed = True
+
+                    ev_loc=self.vehicle_actors[self.ego_vehicle_idx].get_location()
+                    cam_loc=carla.Location(x=ev_loc.x,y=ev_loc.y,z=ev_loc.z+50.)
+                    self.drone.set_location(cam_loc)
+
+
 
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
                         control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict)
@@ -371,8 +379,8 @@ class RunLKScenario:
                         cv2.putText(img_drone, ego_str, (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                     if self.viz_params.overlay_gmm:
-                        if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
-                            self._viz_gmm(img_drone, tvs_mode_dists)
+                        # if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
+                        self._viz_gmm(img_drone, tvs_mode_dists)
 
                     if self.viz_params.overlay_traj_hist:
                         self._viz_traj_hist(img_drone)
@@ -446,9 +454,11 @@ class RunLKScenario:
 
             if np.any(np.isnan(past_states_tv)):
                 # Not enough data for predictions to be made.
+                pol=self.vehicle_policies[self.tv_vehicle_idxs[0]]
                 tvs_mode_probs = [ np.ones(self.ego_num_modes) / self.ego_num_modes ]
-                tvs_mode_dists = [[np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes),
-                                  np.stack([[0.1*np.identity(2)]*self.ego_N]*self.ego_num_modes)]]
+                tvs_mode_dists = [[np.stack([[curr_target_vehicle_position+i*pol.DT*np.array([pol.nominal_speed,0.]) for i in range(self.ego_N)] for _ in range(self.ego_num_modes)]),
+                                  np.stack([[0.8*np.identity(2)]*self.ego_N for _ in range(self.ego_num_modes)])]]
+                # import pdb;pdb.set_trace()
                 tvs_valid_pred = [False]
             else:
                 img_tv = self.rasterizer.rasterize(self.agent_history, target_agent_id)
@@ -462,9 +472,10 @@ class RunLKScenario:
 
             if np.any(np.isnan(past_states_static)):
                 # Not enough data for predictions to be made.
+                pol=self.vehicle_policies[self.static_vehicle_idxs[0]]
                 tvs_mode_probs.append( np.ones(self.ego_num_modes) / self.ego_num_modes )
-                tvs_mode_dists.append([np.stack([[curr_target_vehicle_position]*self.ego_N]*self.ego_num_modes),
-                                  np.stack([[0.1*np.identity(2)]*self.ego_N]*self.ego_num_modes)])
+                tvs_mode_dists.append([np.stack([[curr_static_vehicle_position+i*pol.DT*np.array([pol.nominal_speed,0.]) for i in range(self.ego_N)] for _ in range(self.ego_num_modes)]),
+                                  np.stack([[0.8*np.identity(2)]*self.ego_N for _ in range(self.ego_num_modes)])])
                 tvs_valid_pred.append(False)
             else:
                 img_tv = self.rasterizer.rasterize(self.agent_history, static_agent_id)
@@ -473,7 +484,7 @@ class RunLKScenario:
                 gmm_pred_static=gmm_pred_static.get_top_k_GMM(self.ego_num_modes)
 
                 tvs_mode_probs.append(gmm_pred_static.mode_probabilities)
-                tvs_mode_dists.append([gmm_pred_tv.mus[:, :self.ego_N, :], gmm_pred_tv.sigmas[:, :self.ego_N, :, :]])
+                tvs_mode_dists.append([gmm_pred_static.mus[:, :self.ego_N, :], gmm_pred_static.sigmas[:, :self.ego_N, :, :]])
                 tvs_valid_pred.append(True)
 
         return tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred
@@ -488,10 +499,8 @@ class RunLKScenario:
         bp_library = self.world.get_blueprint_library()
         bp_drone  = bp_library.find('sensor.camera.rgb')
 
-        # TODO: compute these, hardcoded for now.
-        self.A_world_to_drone = np.array([[    0., -19.2],
-                                          [-19.2,      0.]])
-        self.b_world_to_drone = np.array([ 960., 1116.])
+
+
 
         # This is like a top down view of the intersection.  Can tune later.
         # cam_loc = carla.Location(x=drone_viz_params.x,
@@ -500,10 +509,15 @@ class RunLKScenario:
         # cam_ori = carla.Rotation(roll=drone_viz_params.roll,
         #                  pitch=drone_viz_params.pitch,
         #                  yaw=drone_viz_params.yaw)
-        cam_loc = carla.Location(x=-40.,
-                                 y=0.,
-                                 z=20.)
-        cam_ori = carla.Rotation(pitch=-15)
+        ego_location = self.vehicle_actors[self.ego_vehicle_idx].get_location()
+        cam_loc = carla.Location(x=ego_location.x,
+                                 y=ego_location.y,
+                                 z=ego_location.z+50.)
+        cam_ori = carla.Rotation(yaw=drone_viz_params.yaw, pitch=drone_viz_params.pitch)
+
+        self.drone_pitch=np.radians(float(drone_viz_params.pitch))
+        self.drone_img_width=drone_viz_params.img_width
+        self.drone_fov=np.radians(float(drone_viz_params.fov))
 
         cam_transform = carla.Transform(cam_loc, cam_ori)
 
@@ -512,7 +526,7 @@ class RunLKScenario:
         bp_drone.set_attribute('fov', str(drone_viz_params.fov))
         bp_drone.set_attribute('role_name', 'drone')
 
-        self.drone = self.world.spawn_actor(bp_drone, cam_transform, attach_to=self.vehicle_actors[self.tv_vehicle_idxs[0]])
+        self.drone = self.world.spawn_actor(bp_drone, cam_transform)
 
     def _setup_vehicles(self, vehicle_params_list, carla_params):
         intersection_fname = os.path.join( os.path.dirname(os.path.abspath(__file__)),
@@ -548,6 +562,13 @@ class RunLKScenario:
             goal_transform  = get_intersection_transform(intersection, vp, "goal")
 
             veh_actor  = self.world.spawn_actor(veh_bp, start_transform)
+            # import pdb; pdb.set_trace()
+            # yaw_carla = veh_actor.get_transform().rotation.yaw
+            # carla_vel = carla.Vector3D(x=vp.init_speed*np.cos(np.radians(yaw_carla)) ,
+            #                            y=vp.init_speed*np.sin(np.radians(yaw_carla)) ,
+            #                            z=0.)
+            # veh_actor.set_velocity(carla_vel)
+
             veh_policy = get_vehicle_policy(vp, veh_actor, goal_transform)
 
             self.vehicle_actors.append(veh_actor)
@@ -559,6 +580,9 @@ class RunLKScenario:
         self.ego_vehicle_idx = ego_vehicle_idxs[0]
         self.ego_N           = vehicle_params_list[self.ego_vehicle_idx].N
         self.ego_num_modes   = vehicle_params_list[self.ego_vehicle_idx].num_modes
+
+        self.world.get_spectator().set_transform(carla.Transform(carla.Location(x=intersection[0][0][0]-10., y=intersection[0][0][1], z=5. ),
+                                                                 carla.Rotation(pitch=-10., yaw=intersection[0][0][2])))
 
         # Note: this can be empty, as checked in the _make_predictions code.
         self.tv_vehicle_idxs = tv_vehicle_idxs
@@ -583,26 +607,45 @@ class RunLKScenario:
                                          past_states = zero_traj)
 
     def _viz_gmm(self, img, tvs_mode_dists, mdist_sq_thresh=5.991):
-        mus    = tvs_mode_dists[0][0] # N_modes by N by 2
-        sigmas = tvs_mode_dists[1][0] # N_modes by N by 2 by 2
 
-        # Note: we reverse mode_dists and colors s.t. least probable mode is plotted first.
-        # zip_obj = zip( reversed(mus), reversed(sigmas), reversed(self.mode_rgb_colors) )
-        zip_obj = zip( mus, sigmas, self.mode_rgb_colors )
+        for k in range(len(tvs_mode_dists)):
+            mus    = tvs_mode_dists[k][0] # N_modes by N by 2
+            sigmas = tvs_mode_dists[k][1] # N_modes by N by 2 by 2
 
-        for mean_traj, covar_traj, color in zip_obj:
-            color = color[::-1] # rgb to bgr
-            for (mean_xy, covar_xy) in zip(mean_traj, covar_traj):
-                mu_px    = self.A_world_to_drone @ mean_xy + self.b_world_to_drone
-                center_x = int(mu_px[0])
-                center_y = int(mu_px[1])
-                covar_px = self.A_world_to_drone @ covar_xy @ self.A_world_to_drone.T
-                evals_px, evecs_px = np.linalg.eigh(covar_px)
+            drone_location = self.drone.get_location()
+            self.p_drone=np.array([drone_location.x,-drone_location.y, drone_location.z])
+            tv_location = self.vehicle_actors[self.tv_vehicle_idxs[0]].get_location()
+            self.tv_z=tv_location.z
+            scale=self.drone_img_width/(2*self.p_drone[2]*np.tan(0.5*self.drone_fov))
 
-                length_ax1 = int( np.sqrt(mdist_sq_thresh * evals_px[0]) ) # half the first axis diameter in pixels
-                length_ax2 = int( np.sqrt(mdist_sq_thresh * evals_px[1]) ) # half the second axis diameter in pixels
-                ang_1 = -np.degrees( np.arctan2(evecs_px[1,0], evecs_px[0,0]) ) # -ang since cv2.ellipse uses clockwise angle
-                cv2.ellipse( img, (center_x, center_y), (length_ax1, length_ax2), ang_1, 0, 360, color, thickness=2)
+            self.rot_world_to_drone=scale*np.array([[1.,0.,0.],[0.,0.,1.],[0.,-1.,0.]])\
+                                        @np.array([[0.,-1.,0.],[1.,0.,0.],[0.,0.,1.]])\
+                                        @np.array([[np.cos(-self.drone_pitch),0.,np.sin(-self.drone_pitch)],[0.,1.,0.],[-np.sin(-self.drone_pitch),0.,np.cos(-self.drone_pitch)]])
+
+
+
+            # self.A_world_to_drone = np.array([[    0., -19.2],
+            #                                   [-19.2,      0.]])
+            # self.b_world_to_drone = -self.p_drone
+
+            # Note: we reverse mode_dists and colors s.t. least probable mode is plotted first.
+            # zip_obj = zip( reversed(mus), reversed(sigmas), reversed(self.mode_rgb_colors) )
+            zip_obj = zip( mus, sigmas, self.mode_rgb_colors )
+
+            for mean_traj, covar_traj, color in zip_obj:
+                # color = color[::-1] # rgb to bgr
+                for (mean_xy, covar_xy) in zip(mean_traj, covar_traj):
+
+                    mu_px    = self.rot_world_to_drone @ (np.hstack((mean_xy,self.tv_z)) - self.p_drone)
+                    center_x = int(mu_px[0])+960
+                    center_y = int(mu_px[1])+540
+                    covar_px = self.rot_world_to_drone[0:2,0:2] @ covar_xy @ self.rot_world_to_drone[0:2,0:2].T
+                    evals_px, evecs_px = np.linalg.eigh(covar_px)
+                    # import pdb;pdb.set_trace()
+                    length_ax1 = int( np.sqrt(mdist_sq_thresh * evals_px[0]) ) # half the first axis diameter in pixels
+                    length_ax2 = int( np.sqrt(mdist_sq_thresh * evals_px[1]) ) # half the second axis diameter in pixels
+                    ang_1 = -np.degrees( np.arctan2(evecs_px[1,0], evecs_px[0,0]) ) # -ang since cv2.ellipse uses clockwise angle
+                    cv2.ellipse( img, (center_x, center_y), (length_ax1, length_ax2), ang_1, 0, 360, color, thickness=2)
 
     def _viz_traj_hist(self, img, radius=2):
         for idx_act, (act, act_color) in enumerate(zip(self.vehicle_actors,self.vehicle_colors)):
