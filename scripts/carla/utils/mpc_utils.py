@@ -434,7 +434,23 @@ class SMPC_MMPreds():
             for j in range(self.N_modes):
                 T_block[k][j][0:2,:]=ca.DM.eye(2)
                 for t in range(self.N):
+                # <<<<<<< Updated upstream
 
+
+#                     T_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@T_block[k][j][t*2:(t+1)*2,:]
+#                     C_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@C_block[k][j][t*2:(t+1)*2,:]+c[k][j][t]
+#                     F_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@F_block[k][j][t*2:(t+1)*2,:]
+#                     F_block[k][j][(t+1)*2:(t+2)*2,t*2:(t+1)*2]=F
+
+#         return T_block, C_block, F_block
+
+
+#     def _set_TV_ref(self, i, N_TV, x_tv0, y_tv0, mu_tv, sigma_tv):
+
+
+#         T=self.T_tv[i]
+#         c=self.c_tv[i]
+        # =======
 
                     T_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@T_block[k][j][t*2:(t+1)*2,:]
                     C_block[k][j][(t+1)*2:(t+2)*2,:]=T[k][j][t]@C_block[k][j][t*2:(t+1)*2,:]+c[k][j][t]
@@ -446,6 +462,8 @@ class SMPC_MMPreds():
 
     def _set_TV_ref(self, i, N_TV, x_tv0, y_tv0, mu_tv, sigma_tv):
 
+        # Mean target positions to be used for linearizing obstacle avoidance constraints
+# >>>>>>> Stashed changes
 
         T=self.T_tv[i]
         c=self.c_tv[i]
@@ -458,17 +476,17 @@ class SMPC_MMPreds():
                         self.opti[i].set_value(self.y_tv_ref[i][k][j][0], y_tv0[k])
                         self.opti[i].set_value(T[k][j][t], np.identity(2))
                         self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-np.hstack((x_tv0[k],y_tv0[k])))
-                        e_val,e_vec= np.linalg.eigh(0.1*sigma_tv[k][j,t,:,:])
+                        e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
                         self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], e_vec@np.diag(np.sqrt(e_val))@e_vec.T)
                     else:
                         self.opti[i].set_value(self.x_tv_ref[i][k][j][t], mu_tv[k][j,t-1,0])
                         self.opti[i].set_value(self.y_tv_ref[i][k][j][t], mu_tv[k][j,t-1,1])
                         if t<self.N:
-                            e_val,e_vec= np.linalg.eigh(0.1*sigma_tv[k][j,t,:,:])
-                            e_valp,e_vecp= np.linalg.eigh(0.1*sigma_tv[k][j,t-1,:,:])
+                            e_val,e_vec= np.linalg.eigh(sigma_tv[k][j,t,:,:])
+                            e_valp,e_vecp= np.linalg.eigh(sigma_tv[k][j,t-1,:,:])
                             Ttv=e_vec@np.diag(np.sqrt(e_val))@e_vec.T@e_vecp@np.diag(np.sqrt(e_valp)**(-1))@e_vecp.T
 
-                            self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], ca.chol(0.1*sigma_tv[k][j,t,:,:]) )
+                            self.opti[i].set_value(self.Sigma_tv_sqrt[i][k][j][t], ca.chol(sigma_tv[k][j,t,:,:]) )
                             self.opti[i].set_value(T[k][j][t], Ttv)
                             self.opti[i].set_value(c[k][j][t], mu_tv[k][j, t, :]-Ttv@mu_tv[k][j, t-1, :])
 
@@ -591,8 +609,13 @@ class SMPC_MMPreds():
             nom_z_diff= ca.diff(nom_z_ev.reshape((4,-1)),1,1).reshape((-1,1))
 
 
+# <<<<<<< Updated upstream
             cost_matrix_z=ca.diagcat(self.Q, *[1**(s/2)*self.rot_costs[i][s] for s in range(self.N)])
             cost_matrix_u=ca.kron(ca.diagcat(*[1**(s/2) for s in range(self.N-1)]),self.R)
+# =======
+            # cost_matrix_z=ca.diagcat(self.Q, *[1**t*self.rot_costs[i][t] for t in range(self.N)])
+            # cost_matrix_u=ca.kron(ca.diagcat(*[1**i for i in range(self.N-1)]),self.R)
+# >>>>>>> Stashed changes
 
             nom_z_ev_i.append(nom_z_ev)
             nom_u_ev_i.append(h[j].reshape((2,self.N)))
@@ -1010,7 +1033,11 @@ class SMPC_MMPreds_OBCA():
 
             M_stack=[ca.vertcat(*[ca.horzcat(*[M[t][j][m*int(t>=t_bar)] for j in range(t)], ca.DM(2,4*(self.N-t))) for t in range(self.N)]) for m in range(self.N_modes)]
             h_stack=[ca.vertcat(*[h[t][m*int(t>=t_bar)] for t in range(self.N)]) for m in range(self.N_modes)]
+# <<<<<<< Updated upstream
             K_stack=[[ca.diagcat(ca.DM(2,2),*[K[t-1][m*int(t>=t_bar)][k] for t in range(1,self.N)]) for k in range(N_TV)] for m in range(self.N_modes)]
+# =======
+            # K_stack=[[ca.diagcat(*[K[t][m*int(t>=t_bar)][k] for t in range(self.N)]) for k in range(N_TV)] for m in range(self.N_modes)]
+# >>>>>>> Stashed changes
 
 
         return h_stack,M_stack,K_stack

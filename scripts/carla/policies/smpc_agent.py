@@ -89,33 +89,33 @@ class SMPCAgent(object):
 
         # Debugging: see the reference solution.
 
-        plt.subplot(411)
-        # import pdb; pdb.set_trace()
-        plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
-        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],0], 'r')
+        # plt.subplot(411)
+        # # import pdb; pdb.set_trace()
+        # plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],0], 'r')
 
-        plt.ylabel('x')
-        plt.subplot(412)
-        plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
-        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],1], 'r')
-        plt.ylabel('y')
-        plt.subplot(413)
-        plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
-        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],2], 'r')
-        plt.ylabel('yaw')
-        plt.subplot(414)
-        plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
-        plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],3], 'r')
-        plt.ylabel('v')
+        # plt.ylabel('x')
+        # plt.subplot(412)
+        # plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],1], 'r')
+        # plt.ylabel('y')
+        # plt.subplot(413)
+        # plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],2], 'r')
+        # plt.ylabel('yaw')
+        # plt.subplot(414)
+        # plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],3], 'r')
+        # plt.ylabel('v')
 
-        plt.figure()
-        plt.subplot(211)
-        plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,0])
-        plt.ylabel('acc')
-        plt.subplot(212)
-        plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,1])
-        plt.ylabel('df')
-        plt.show()
+        # plt.figure()
+        # plt.subplot(211)
+        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,0])
+        # plt.ylabel('acc')
+        # plt.subplot(212)
+        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,1])
+        # plt.ylabel('df')
+        # plt.show()
 
         # MPC initialization (might take a while....)
         if not self.ol_flag:
@@ -264,7 +264,7 @@ class SMPCAgent(object):
         target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
         N_TV=len(target_vehicle_positions)
-
+        pdb.set_trace()
 
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y
