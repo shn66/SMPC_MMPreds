@@ -94,7 +94,7 @@ class VehicleParams:
     # General MPC parameters.  Some of these can be ignored (e.g. n_modes if using MPCAgent).
     N         : int   = 10  # horizon of the MPC solution
     dt        : float = 0.2 # timestep of the discretization used (s)
-    num_modes : int   = 1   # number of GMM modes considered by MPC (prioritizing most probable ones first)
+    num_modes : int   = 3   # number of GMM modes considered by MPC (prioritizing most probable ones first)
 
     # SMPC specific parameters (ignored for any other policy_type).
     smpc_config : str = "full" # "full", "open_loop", "no_switch"
@@ -321,7 +321,7 @@ class RunIntersectionScenario:
                     carla_vel = carla.Vector3D(x=init_speed*np.cos(np.radians(yaw_carla)) ,
                                                y=init_speed*np.sin(np.radians(yaw_carla)) ,
                                                z=0.)
-                    veh_actor.set_target_velocity(carla_vel)
+                    veh_actor.set_velocity(carla_vel)
 
                 for _ in range(2):
                     sync_mode.tick(timeout=self.timeout)
@@ -338,6 +338,7 @@ class RunIntersectionScenario:
                     # Run policies for each agent.
                     t_elapsed = snap.elapsed_seconds
                     completed = True
+                    ego_feas=False
 
                     for idx_act, (act, policy) in enumerate(zip(self.vehicle_actors, self.vehicle_policies)):
                         control, z0, u0, is_feasible, solve_time = policy.run_step(pred_dict)
@@ -358,6 +359,7 @@ class RunIntersectionScenario:
                             ego_vel   = act.get_velocity()
                             ego_speed = np.linalg.norm([ego_vel.x, ego_vel.y])
                             ego_ctrl  = control
+                            ego_feas=is_feasible
 
                     # Get drone camera image.
                     img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)
@@ -369,6 +371,11 @@ class RunIntersectionScenario:
                     if self.viz_params.overlay_ego_info:
                         ego_str = f"EGO - v:{ego_speed:.3f}, th: {ego_ctrl.throttle:.2f}, bk: {ego_ctrl.brake:.2f}, st: {ego_ctrl.steer:.2f}"
                         cv2.putText(img_drone, ego_str, (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                    if not ego_feas:
+                        feas_str = "INFEASIBLE"
+                        cv2.putText(img_drone, feas_str, (100,600), cv2.FONT_HERSHEY_SIMPLEX, 2, (0,0,255), 2)
+
 
                     if self.viz_params.overlay_gmm:
                         if tvs_valid_pred[0]: # TODO: generalize this to multiple TVs.
@@ -447,10 +454,10 @@ class RunIntersectionScenario:
                 img_tv = self.rasterizer.rasterize(self.agent_history, target_agent_id)
                 gmm_pred_tv = self.pred_model.predict_instance(img_tv, past_states_tv[:-1])
                 gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
-                gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(self.ego_num_modes)
+                gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(self.ego_num_modes+9)
 
-                tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
-                tvs_mode_dists = [[gmm_pred_tv.mus[:, :self.ego_N, :]], [gmm_pred_tv.sigmas[:, :self.ego_N, :, :]]]
+                tvs_mode_probs = [gmm_pred_tv.mode_probabilities[::4]]
+                tvs_mode_dists = [[gmm_pred_tv.mus[::2, :self.ego_N, :]], [gmm_pred_tv.sigmas[::2, :self.ego_N, :, :]]]
                 tvs_valid_pred = [True]
 
         return tvs_positions, tvs_mode_probs, tvs_mode_dists, tvs_valid_pred

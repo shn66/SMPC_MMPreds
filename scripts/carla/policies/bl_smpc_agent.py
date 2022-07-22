@@ -111,8 +111,11 @@ class BLSMPCAgent(object):
                            'psi0'    : psi,
                            'v0'      : speed}
 
+            ref_dict=self._get_reference_traj(**update_dict)
+            psi_ref=ref_dict["psi_ref"]
 
-            update_dict.update( self._get_reference_traj(**update_dict) )
+
+            update_dict.update( ref_dict )
             update_dict.update({'mus'     : target_vehicle_gmm_preds[0], 'sigmas'  : target_vehicle_gmm_preds[1], 'tv_shapes': tv_shape_matrices})
 
 
@@ -225,8 +228,8 @@ class BLSMPCAgent(object):
                    DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                    DF_DOT_MAX =  0.5,
                    C_OBS_SL   = 10000,      # weights for slack on collision avoidance (norm constraint).
-                   Q = [100., 100., 500., 0.1], # weights on x, y, and v.
-                   R = [100., 1000.],           # weights on jerk and slew rate (steering angle derivative)
+                   Q =[0.1*50., 0.005*50, 1*10., 0.1*10.], # weights on x, y, and v.
+                   R = [10., 1000.],           # weights on jerk and slew rate (steering angle derivative)
                    fps =20):
 
 
@@ -252,6 +255,8 @@ class BLSMPCAgent(object):
         self.y_ref   = self.z_ref[:,1]
         self.psi_ref = self.z_ref[:,2]
         self.v_ref   = self.z_ref[:,3]
+
+        self.rot_costs = [self.opti.parameter(4, 4) for _ in range(self.N)]
 
         # Collision Avoidance: mean, variance per mode for each target vehicle (spoofed if not present) along horizon.
         self.tv_means = [ [ self.opti.parameter(self.N_PRED_TV, 2) for _ in range(self.N_modes) ] for _ in range(self.NUM_TVS) ]
@@ -377,7 +382,7 @@ class BLSMPCAgent(object):
     def _add_cost(self):
         cost = 0
         for i in range(self.N):
-            cost += self._quad_form(self.z_dv[i+1, :] - self.z_ref[i,:], self.Q) # tracking cost
+            cost += self._quad_form(self.z_dv[i+1, :] - self.z_ref[i,:], self.rot_costs[i]) # tracking cost
 
         for i in range(self.N - 1):
             cost += self._quad_form(self.u_dv[i+1, :] - self.u_dv[i,:], self.R)  # input derivative cost
@@ -396,6 +401,11 @@ class BLSMPCAgent(object):
         self.opti.set_value(self.y_ref,   y_ref)
         self.opti.set_value(self.psi_ref, psi_ref)
         self.opti.set_value(self.v_ref,   v_ref)
+
+        for t in range(self.N):
+            Rs_ev=np.array([[np.cos(psi_ref[t]),np.sin(psi_ref[t])],[-np.sin(psi_ref[t]), np.cos(psi_ref[t])]])
+            self.opti.set_value(self.rot_costs[t], 10*casadi.diagcat(Rs_ev.T@self.Q[:2,:2]@Rs_ev, self.Q[2:,2:]))
+
 
     def _update_previous_input(self, acc_prev, df_prev):
         self.opti.set_value(self.u_prev, [acc_prev, df_prev])

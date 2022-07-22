@@ -86,9 +86,9 @@ if __name__ == '__main__':
         # Load the scenario and generate parameters.
         scenario_dict = json.load(open(scenario, "r"))
         scenario_name = scenario.split("/")[-1].split('.json')[0]
-        inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/inits/" )
-        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
-        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
+        inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
+        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
+        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
 
 
         # ego_init_list = [glob.glob(inits_folder + "ego_init_09.json")[0], glob.glob(inits_folder + "ego_init_10.json")[0]]
@@ -111,8 +111,9 @@ if __name__ == '__main__':
             # Run all ego policy options with target vehicles.
             # for ego_policy_config in ["blsmpc", "smpc_open_loop", "smpc_no_switch"]:
             # for ego_policy_config in ["smpc_no_switch_OAinner", "smpc_no_switch"]:
-            for ego_policy_config in ["smpc_no_switch_1_obca", "smpc_no_switch_2_obca", "smpc_no_switch_3_obca"]:
-            # # for ego_policy_config in ["smpc_no_switch_2_obca"]:
+            # for ego_policy_config in ["smpc_no_switch_1_obca", "smpc_no_switch_2_obca", "smpc_no_switch_3_obca"]:
+            # for ego_policy_config in ["smpc_no_switch"]:
+            for ego_policy_config in ["smpc_open_loop"]:
             # # for ego_policy_config in ["smpc_no_switch_OAinner"]:
               savedir = os.path.join( results_folder,
                                       f"{scenario_name}_{ego_init_name}_{ego_policy_config}")

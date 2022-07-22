@@ -35,7 +35,7 @@ class SMPCAgent(object):
                  nominal_speed_mps =8.0, # sets desired speed (m/s) for tracking path
                  dt =0.2,
                  N=8,                   # time discretization (s) used to generate a reference
-                 N_modes = 3,
+                 N_modes = 2,
                  smpc_config = "full",
                  OAIA=False,
                  obca=False,
@@ -56,7 +56,7 @@ class SMPCAgent(object):
         self.time=0
         self.t_ref=0
         self.fps=fps
-        self.d_min=2.0
+        self.d_min=1.0
 
         self.OA_inner_approx=OAIA
 
@@ -87,33 +87,33 @@ class SMPCAgent(object):
 
         self.warm_start={}
 
-        ## Debugging: see the reference solution.
+        # Debugging: see the reference solution.
 
         # plt.subplot(411)
         # # import pdb; pdb.set_trace()
         # plt.plot(self.reference[:,0], self.reference[:,1], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,0], 'r')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],0], 'r')
 
         # plt.ylabel('x')
         # plt.subplot(412)
         # plt.plot(self.reference[:,0], self.reference[:,2], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,1], 'r')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],1], 'r')
         # plt.ylabel('y')
         # plt.subplot(413)
         # plt.plot(self.reference[:,0], self.reference[:,3], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,2], 'r')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],2], 'r')
         # plt.ylabel('yaw')
         # plt.subplot(414)
         # plt.plot(self.reference[:,0], self.reference[:,4], 'kx')
-        # plt.plot(self.reference[:,0], self.feas_ref_states[:,3], 'r')
+        # plt.plot(self.reference[:,0], self.feas_ref_states[:self.reference.shape[0],3], 'r')
         # plt.ylabel('v')
 
         # plt.figure()
         # plt.subplot(211)
-        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:,0])
+        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,0])
         # plt.ylabel('acc')
         # plt.subplot(212)
-        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:,1])
+        # plt.plot(self.reference[:-1,0], self.feas_ref_inputs[:self.reference.shape[0]-1,1])
         # plt.ylabel('df')
         # plt.show()
 
@@ -175,9 +175,9 @@ class SMPCAgent(object):
             # # Generate a refernece by fitting a velocity profile with specified nominal speed and time discretization.
 
             way_s, way_xy, way_yaw = fth.extract_path_from_waypoints(route)
-            self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=0.5)
+            self.frenet_traj = fth.FrenetTrajectoryHandler(way_s, way_xy, way_yaw, s_resolution=1.)
             self.nominal_speed = self.nominal_speed_mps
-            self.lat_accel_max = 2.0 # maximum lateral acceleration (m/s^2), for slowing down at turns
+            self.lat_accel_max = 2. # maximum lateral acceleration (m/s^2), for slowing down at turns
 
             self.fit_velocity_profile()
 
@@ -208,6 +208,8 @@ class SMPCAgent(object):
             self.ref_dict={'x_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,0], 'y_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,1], 'psi_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,2], 'v_ref':self.feas_ref_states[self.t_ref+1:self.ref_horizon,3],
                             'x0'  : x,  'y0'  : y,  'psi0'  : psi,  'v0'  : speed, 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1]}
             self.ref_dict['psi_ref'] = fth.fix_angle( self.ref_dict['psi_ref'] - self.ref_dict['psi0']) + self.ref_dict['psi0']
+            self.ref_dict['warm_start']={'z_ws': np.vstack((np.array([[x,y,psi,speed]]),self.feas_ref_states[self.t_ref+1:self.ref_horizon,:])),
+                                         'u_ws': np.array([[self.control_prev[0],self.control_prev[1]]]*self.feas_ref_gen.N) }
             self.feas_ref_gen.update(self.ref_dict)
             self.feas_ref_dict=self.feas_ref_gen.solve()
             self.feas_ref_states_new=self.feas_ref_dict['z_opt']
@@ -262,7 +264,7 @@ class SMPCAgent(object):
         target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
         N_TV=len(target_vehicle_positions)
-
+        # pdb.set_trace()
 
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y
@@ -300,7 +302,7 @@ class SMPCAgent(object):
 
         else:
             # Run SMPC Preds.
-            if self.time%20==0 and self.ref_horizon>self.t_ref+1:
+            if self.time%25==0 and self.ref_horizon>self.t_ref+1:
                 self.reference_regeneration(x,y,psi,speed)
                 # if self.feas_ref_inputs_new.shape[0]==13:
                 #     pdb.set_trace()
@@ -308,7 +310,7 @@ class SMPCAgent(object):
 
 
             t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
-            if self.prev_opt and self.time%10==0:
+            if self.prev_opt and self.time%15==0:
                 l_states, l_inputs = self.linearization_traj(x,y,psi,speed)
 
             else:
@@ -321,13 +323,13 @@ class SMPCAgent(object):
             Rs_ev=[np.array([[np.cos(l_states[t,2]),np.sin(l_states[t,2])],[-np.sin(l_states[t,2]), np.cos(l_states[t,2])]]) for t in range(1,self.N+1)]
 
 
-            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
+            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[k][0][j,:,1]), np.diff(target_vehicle_gmm_preds[k][0][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
             tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
             if self.OA_inner_approx:
                 tv_Q=np.array([[1./(3.6+self.d_min)**2, 0.],[0., 1./(1.2+self.d_min)**2]])
                 tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
             elif not self.obca_flag:
-                v_Q=np.array([[1./(2.6)**2, 0.],[0., 1./(1.45)**2]])
+                v_Q=np.array([[1./(2.)**2, 0.],[0., 1./(1.15)**2]])
                 tv_shape_matrices=[[[ np.identity(2) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
                 for k in range(N_TV):
                     for j in range(self.N_modes):
@@ -355,7 +357,7 @@ class SMPCAgent(object):
                          'v_lin': l_states[:,3].T ,
                          'a_lin': l_inputs[:,0].T ,
                          'df_lin': l_inputs[:,1].T,
-                         'mus'  : target_vehicle_gmm_preds[0],     'sigmas' : target_vehicle_gmm_preds[1], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices, 'Rs_ev': Rs_ev }
+                         'mus'  : [target_vehicle_gmm_preds[0][k] for k in range(N_TV)],     'sigmas' : [target_vehicle_gmm_preds[1][k] for k in range(N_TV)], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices, 'Rs_ev': Rs_ev }
 
 
 
@@ -378,8 +380,8 @@ class SMPCAgent(object):
             else:
 
 
-                t_bar=5
-                i=(N_TV-1)*(self.SMPC.t_bar_max+1)+t_bar
+                t_bar=4
+                i=(N_TV-1)*(self.SMPC.t_bar_max)+t_bar
                 self.SMPC.update(i, update_dict)
                 sol_dict=self.SMPC.solve(i)
 
@@ -406,6 +408,7 @@ class SMPCAgent(object):
             print(f"\toptimal?: {is_opt}")
             print(f"\tv_next: {v_next}")
             print(f"\tsteering: {u0[1]}")
+
             # print(f"\tsolve time: {solve_time}")
             # print(f"\t scaled distance_x: {np.sqrt(scaled_distance)}")
             # print(self.t_ref, self.time)
