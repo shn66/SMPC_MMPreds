@@ -3,6 +3,7 @@ import casadi as ca
 import numpy as np
 from itertools import product
 import scipy.stats as stats
+from scipy.stats import norm
 import pdb
 class RefTrajGenerator():
 
@@ -1008,6 +1009,8 @@ class SMPC_MMPreds():
                 Q =[0.1*50., 0.005*500, 1*10., 0.1*10.], # weights on x, y, and v.
                 R = [10., 1000],       # weights on inputs
                 NS_BL_FLAG=False,
+                fixed_risk=True,
+                inv_cdf      = [np.array([[0.02, 1.35],[0.508, 0.91]]), np.array([[1.35,2.],[0.91, 0.978]])],
                 fps = 20
                 ):
         self.N=N
@@ -1036,6 +1039,15 @@ class SMPC_MMPreds():
         self.v_curr=0.0
         self.noswitch_bl=NS_BL_FLAG
         self.fps=fps
+
+        self.fixed_risk=fixed_risk
+
+        self.inv_cfd=[]
+
+        for i in range(len(inv_cdf)):
+            m=(inv_cdf[i][1,1]-inv_cdf[i][1,0])/(inv_cdf[i][0,1]-inv_cdf[i][0,0])
+            c=inv_cdf[i][1,0]-m*inv_cdf[i][0,0]
+            self.inv_cdfl.append([m,c])
 
         self.opti=[]
 
@@ -1075,6 +1087,15 @@ class SMPC_MMPreds():
         self.nom_u_ev = []
         self.eval_oa=[]
 
+        self.c_mmrstd=[]
+        self.c_mmrprob=[]
+
+        self.mmrisk_std= []
+        self.mmrisk_prob=[]
+
+        self.probs=[]
+
+
 
         p_opts_grb = {'OutputFlag': 0, 'FeasibilityTol' : 1e-3, 'PSDTol' : 1e-3}
         s_opts_grb = {'error_on_fail':0}
@@ -1087,6 +1108,11 @@ class SMPC_MMPreds():
 
             N_TV=1+int(i/self.t_bar_max)
             t_bar=i-(N_TV-1)*self.t_bar_max
+
+            self.probs.append(self.opti[i].parameter(self.N_modes**N_TV))
+
+            self.c_mmrstd.append(ca.DM([self.tight]*(self.N_modes**N_TV)))
+            self.c_mmrprob.append(ca.DM([norm.cdf(self.tight)]*(self.N_modes**N_TV)))
 
             self.z_ref.append(self.opti[i].parameter(4, self.N+1))
             self.u_ref.append(self.opti[i].parameter(2, self.N+1))
@@ -1111,6 +1137,15 @@ class SMPC_MMPreds():
 
             self.dz_curr.append(self.opti[i].parameter(4))
             self.slacks.append(self.opti[i].variable(1))
+
+            if self.fixed_risk:
+                self.mmrisk_std.append(self.opti[i].parameter(self.N_modes**N_TV))
+                self.opti[i].set_value(self.mmrisk_std[i], self.c_mmrstd[i])
+                self.mmrisk_prob.append(self.opti[i].parameter(self.N_modes**N_TV))
+                self.opti[i].set_value(self.mmrisk_prob[i], self.c_mmrprob[i])
+            else:
+                self.mmrisk_std.append(self.opti[i].variable(self.N_modes**N_TV))
+                self.mmrisk_prob.append(self.opti[i].variable(self.N_modes**N_TV))
 
 
 
@@ -1301,6 +1336,10 @@ class SMPC_MMPreds():
         nom_u_ev_i = []
         eval_oa_i=[]
 
+        mmr_std=self.mmrisk_std[i]
+        mmr_p=self.mmrisk_prob[i]
+
+
 
         [A_block,B_block,E_block]=self._get_LTV_EV_dynamics(i, N_TV)
         [T_block,C_block,F_block]=self._get_ATV_TV_dynamics(i, N_TV)
@@ -1320,8 +1359,15 @@ class SMPC_MMPreds():
         self.opti[i].subject_to( self.DF_DOT_MIN-slack<=(-self.u_prev[i][1]+self.df_lin[i][0]+h[0][1,0])*self.fps)
         self.opti[i].subject_to((-self.u_prev[i][1]+self.df_lin[i][0]+h[0][1,0])*self.fps<=slack+self.DF_DOT_MAX)
 
-
+        total_prob=0
         for j in range(1+(-1+self.N_modes)*(t_bar>0)):
+            if not self.fixed_risk:
+                self.opti[i].subject_to(self.opti[i].bounded(0.0000001, mmr_std[j],3.0))
+                total_prob+=mmr_p[j]*self.probs[i][j]
+                for m,c in self.inv_cdfl:
+                    self.opti.subject_to(mmr_p[j]<=m*mmr_std[j]+c)
+                    self.opti.subject_to(self.opti.bounded(0.5, mmr_p[j],1.))
+
 
             for t in range(1,self.N):
 
@@ -1333,12 +1379,12 @@ class SMPC_MMPreds():
 
                 for k in range(N_TV):
 
-                    z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(ca.horzcat(B_block[t*4:t*4+2,:]@M[j]+E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[j][l]@F_block[l][j][:2*self.N,:]-int(l==k)*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))
+                    z=-2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(ca.horzcat(B_block[t*4:t*4+2,:]@M[j]+mmr_std[j]*E_block[t*4:t*4+2,:], *[B_block[t*4:t*4+2,:]@K[j][l]@F_block[l][j][:2*self.N,:]-int(l==k)*mmr_std[j]*F_block[k][j][t*2:(t+1)*2,:] for l in range(N_TV)]))
 
                     y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[j]-T_block[k][j][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][j][t*2:(t+1)*2,:])\
                                                    +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t])).T@self.Q_tv[i][k][j][t-1]@(self.z_lin[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][j][t], self.y_tv_ref[i][k][j][t]))
 
-                    soc_constr=ca.soc(self.tight*z,y)
+                    soc_constr=ca.soc(z,y)
 
                     self.opti[i].subject_to(soc_constr>0)
 
@@ -1390,6 +1436,8 @@ class SMPC_MMPreds():
             self.opti[i].subject_to( self.opti[i].bounded(self.DF_DOT_MIN-slack,
                                                       nom_diff_df/self.DT,
                                                       self.DF_DOT_MAX+slack))
+        if not self.fixed_risk:
+            self.opti[i].subject_to(total_prob>=self.c_mmrprob[i][0])
 
         self.opti[i].minimize( cost )
         self.nom_z_ev.append(nom_z_ev_i)
@@ -1486,6 +1534,12 @@ class SMPC_MMPreds():
         self.v_curr=update_dict['dv0']+update_dict['v_ref'][0]
         self.v_next=update_dict['v_ref'][1]
         self.update_dict=update_dict
+
+        N_TV=1+int(i/self.t_bar_max)
+        if "probs" in update_dict.keys():
+            self.opti[i].set_value(self.probs[i], update_dict["probs"])
+        else:
+            self.opti[i].set_value(self.probs[i], np.ones(self.N_modes**N_TV)/(self.N_modes**N_TV))
 
 
 
@@ -2208,6 +2262,9 @@ class SMPC_MMPreds_OBCA():
         self.v_curr=update_dict['dv0']+update_dict['v_ref'][0]
         self.v_next=update_dict['v_ref'][1]
         self.update_dict=update_dict
+
+        
+
 
         N_TV=1+int(i/self.t_bar_max)
         t_bar=i-(N_TV-1)*self.t_bar_max
