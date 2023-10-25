@@ -49,7 +49,7 @@ class CarlaParams:
     # Carla client settings.
     ip_addr        : str   = "localhost"
     port           : int   = 2000
-    timeout_period : float = 2.0
+    timeout_period : float = 999
 
 @dataclass(frozen=True)
 class DroneVizParams:
@@ -121,9 +121,10 @@ def load_intersection(intersection_csv):
     intersection = []
 
     for line in lines:
-        if '#' in line:
+        if '#' in line or len(line)==0:
             continue # comment
-        data = line.replace(" ", "").split(",")
+        data = line.replace(" ", "").replace("\n","").split(",")
+
         start_pose = [float(data[0]), float(data[1]), int(data[2])]
         goal_pose  = [float(data[3]), float(data[4]), int(data[5])]
         intersection.append( [start_pose, goal_pose] )
@@ -320,10 +321,10 @@ class RunLKScenario:
                 # Set initial velocity for all vehicle agents.
                 for veh_actor, init_speed in zip(self.vehicle_actors, self.vehicle_init_speeds):
                     yaw_carla = veh_actor.get_transform().rotation.yaw
-                    carla_vel = carla.Vector3D(x=init_speed*np.cos(np.radians(yaw_carla)) ,
-                                               y=init_speed*np.sin(np.radians(yaw_carla)) ,
+                    carla_vel = carla.Vector3D(x=0.5*init_speed*np.cos(np.radians(yaw_carla)) ,
+                                               y=0.5*init_speed*np.sin(np.radians(yaw_carla)) ,
                                                z=0.)
-                    veh_actor.set_velocity(carla_vel)
+                    veh_actor.set_target_velocity(carla_vel)
 
                 for _ in range(1):
                     sync_mode.tick(timeout=self.timeout)
@@ -445,7 +446,7 @@ class RunLKScenario:
             curr_target_vehicle_position = R_target_to_world @ past_states_tv[-1, 1:3] + t_target_to_world
             tvs_positions = [curr_target_vehicle_position]
 
-            static_agent_id = self.vehicle_actors[self.static_vehicle_idxs[0]].id
+            static_agent_id = self.vehicle_actors[self.tv_vehicle_idxs[-1]].id
             past_states_static, R_static_to_world, t_static_to_world = \
                 get_target_agent_history(self.agent_history, static_agent_id)
 
@@ -472,7 +473,7 @@ class RunLKScenario:
 
             if np.any(np.isnan(past_states_static)):
                 # Not enough data for predictions to be made.
-                pol=self.vehicle_policies[self.static_vehicle_idxs[0]]
+                pol=self.vehicle_policies[self.tv_vehicle_idxs[-1]]
                 tvs_mode_probs.append( np.ones(self.ego_num_modes) / self.ego_num_modes )
                 tvs_mode_dists.append([np.stack([[curr_static_vehicle_position+i*pol.DT*np.array([pol.nominal_speed,0.]) for i in range(self.ego_N)] for _ in range(self.ego_num_modes)]),
                                   np.stack([[0.8*np.identity(2)]*self.ego_N for _ in range(self.ego_num_modes)])])
@@ -553,7 +554,7 @@ class RunLKScenario:
             elif vp.role == "static":
                 # pass
                 static_vehicle_idxs.append(idx)
-            elif vp.role == "target":
+            elif "target" in vp.role:
                 tv_vehicle_idxs.append(idx)
             else:
                 raise ValueError(f"Invalid vehicle role selection : {vp.role}")
@@ -562,12 +563,13 @@ class RunLKScenario:
             goal_transform  = get_intersection_transform(intersection, vp, "goal")
 
             veh_actor  = self.world.spawn_actor(veh_bp, start_transform)
+            # veh_actor.set_enable_gravity(enabled=False)
             # import pdb; pdb.set_trace()
-            # yaw_carla = veh_actor.get_transform().rotation.yaw
-            # carla_vel = carla.Vector3D(x=vp.init_speed*np.cos(np.radians(yaw_carla)) ,
-            #                            y=vp.init_speed*np.sin(np.radians(yaw_carla)) ,
-            #                            z=0.)
-            # veh_actor.set_velocity(carla_vel)
+            yaw_carla = veh_actor.get_transform().rotation.yaw
+            carla_vel = carla.Vector3D(x=0.5*np.cos(np.radians(yaw_carla)) ,
+                                       y=0.5*np.sin(np.radians(yaw_carla)) ,
+                                       z=0.)
+            veh_actor.set_target_velocity(carla_vel)
 
             veh_policy = get_vehicle_policy(vp, veh_actor, goal_transform)
 

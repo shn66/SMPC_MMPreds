@@ -19,20 +19,7 @@
 		"ego_init_lk.json"
 	],
 	"vehicle_params" : [
-		{
-			"role"                        : "static",
-			"vehicle_type"                : "vehicle.mercedes-benz.coupe",
-			"vehicle_color"               : "246, 246, 246",
-			"policy_type"                 : "static",
-			"intersection_start_node_idx" : 0,
-			"intersection_goal_node_idx"  : 0,
-			"start_left_offset"           : 1.0,
-			"goal_left_offset"            : 1.5,
-			"start_longitudinal_offset"   : 8.0,
-			"goal_longitudinal_offset"    : 25.0,
-			"nominal_speed"               : 10.0,
-			"init_speed"                  : 14.0
-		},
+		
 		{
 			"role"                        : "target",
 			"vehicle_type"                : "vehicle.mercedes-benz.coupe",
@@ -40,12 +27,26 @@
 			"policy_type"                 : "mpc",
 			"intersection_start_node_idx" :     0,
 			"intersection_goal_node_idx"  :     0,
-			"start_left_offset"           :   6.0,
-			"goal_left_offset"            :   6.0,
-			"start_longitudinal_offset"   : -10.0,
-			"goal_longitudinal_offset"    :  5.0,
-			"nominal_speed"               :  11.0,
-			"init_speed"                  :  14.0
+			"start_left_offset"           :   0.0,
+			"goal_left_offset"            :   0.0,
+			"start_longitudinal_offset"   :  15.0,
+			"goal_longitudinal_offset"    :  50.0,
+			"nominal_speed"               :  5.0,
+			"init_speed"                  :  5.0
+		},
+		{
+			"role"                        : "target_2",
+			"vehicle_type"                : "vehicle.mercedes-benz.coupe",
+			"vehicle_color"               : "186, 0, 0",
+			"policy_type"                 : "mpc",
+			"intersection_start_node_idx" :     0,
+			"intersection_goal_node_idx"  :     0,
+			"start_left_offset"           :   3.5,
+			"goal_left_offset"            :   3.5,
+			"start_longitudinal_offset"   : -25.0,
+			"goal_longitudinal_offset"    :  -15.0,
+			"nominal_speed"               :  5.0,
+			"init_speed"                  :  5.0
 		},
 		{
 			"role"                        : "ego",
@@ -54,9 +55,9 @@
 			"intersection_start_node_idx" :    0,
 			"intersection_goal_node_idx"  :    0,
 			"start_left_offset"           :  0.0,
-			"goal_left_offset"            :  6.5,
-			"goal_longitudinal_offset"    : 25.0,
-			"nominal_speed"               : 13.0
+			"goal_left_offset"            :  3.5,
+			"goal_longitudinal_offset"    : 0.0,
+			"nominal_speed"               : 7.0
 		}
 	]
 }

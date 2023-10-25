@@ -189,6 +189,7 @@ class SMPCAgent(object):
             self.feas_ref_gen.update(self.ref_dict)
             self.feas_ref_dict=self.feas_ref_gen.solve()
             self.feas_ref_states=self.feas_ref_dict['z_opt']
+
             self.feas_ref_states=np.vstack((self.feas_ref_states, np.array([self.feas_ref_states[-1,:]]*(self.N+1))))
             self.feas_ref_inputs=self.feas_ref_dict['u_opt']
             self.feas_ref_inputs=np.vstack((self.feas_ref_inputs, np.array([self.feas_ref_inputs[-1,:]]*(self.N+1))))
@@ -264,7 +265,7 @@ class SMPCAgent(object):
         target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
         N_TV=len(target_vehicle_positions)
-        pdb.set_trace()
+        # pdb.set_trace()
 
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y

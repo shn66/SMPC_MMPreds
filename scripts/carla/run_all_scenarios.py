@@ -59,7 +59,7 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
             # Not generating static vehicles
             vehicles_params_list.append( VehicleParams(**vp_dict) )
             # continue
-        elif vp_dict["role"] == "target":
+        elif "target" in vp_dict["role"]:
             vehicles_params_list.append( VehicleParams(**vp_dict) )
         elif vp_dict["role"] == "ego":
             vp_dict.update(ego_init_dict)
@@ -85,8 +85,8 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 if __name__ == '__main__':
     scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
     # scenarios_list = sorted(glob.glob(scenario_folder + "scenario_*.json"))
-    scenarios_list = glob.glob(scenario_folder + "scenario_01.json")
-    # scenarios_list = glob.glob(scenario_folder + "scenario_lk2.json")
+    # scenarios_list = glob.glob(scenario_folder + "scenario_01.json")
+    scenarios_list = glob.glob(scenario_folder + "scenario_lk.json")
     results_folder = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results" )
 
     for scenario in scenarios_list:
@@ -96,10 +96,10 @@ if __name__ == '__main__':
         inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
         # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
 
-        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_lk.json"))
+        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_lk.json"))
         # pdb.set_trace()
 
-        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
+        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
 
 
 
