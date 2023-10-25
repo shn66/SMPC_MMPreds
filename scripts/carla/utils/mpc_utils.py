@@ -224,7 +224,6 @@ class RefTrajGenerator():
 
 
 
-
 class SMPC_MMPreds():
 
     def __init__(self,
@@ -251,7 +250,7 @@ class SMPC_MMPreds():
                 Q =[0.1*50., 0.005*500, 1*10., 0.1*10.], # weights on x, y, and v.
                 R = [10., 1000],       # weights on inputs
                 NS_BL_FLAG=False,
-                fixed_risk=True,
+                fixed_risk=False,
                 inv_cdf      = [np.array([[0.02, 1.35],[0.508, 0.91]]), np.array([[1.35,2.],[0.91, 0.978]])],
                 fps = 20
                 ):
@@ -419,6 +418,7 @@ class SMPC_MMPreds():
             self._update_tv_preds(i, N_TV*[20.0], N_TV*[20.0], N_TV*[20*np.ones((self.N_modes, self.N, 2))], N_TV*[np.stack(self.N_modes*[self.N*[np.identity(2)]])])
             self._update_previous_input(i, 0.0, 0.0)
             self._update_tv_shapes(i, N_TV*[self.N_modes*[self.N*[0.1*np.identity(2)]]])
+            self.opti[i].set_value(self.probs[i], np.ones(self.N_modes**N_TV)/(self.N_modes**N_TV))
             sol=self.solve(i)
 
 
@@ -607,8 +607,8 @@ class SMPC_MMPreds():
                 self.opti[i].subject_to(self.opti[i].bounded(0.0000001, mmr_std[j],3.0))
                 total_prob+=mmr_p[j]*self.probs[i][j]
                 for m,c in self.inv_cdfl:
-                    self.opti.subject_to(mmr_p[j]<=m*mmr_std[j]+c)
-                    self.opti.subject_to(self.opti.bounded(0.5, mmr_p[j],1.))
+                    self.opti[i].subject_to(mmr_p[j]<=m*mmr_std[j]+c)
+                    self.opti[i].subject_to(self.opti[i].bounded(0.5, mmr_p[j],1.))
 
 
             for t in range(1,self.N):
@@ -713,6 +713,7 @@ class SMPC_MMPreds():
 
 
             # Suboptimal solution (e.g. timed out).
+
 
             if self.opti[i].stats()['return_status']=='SUBOPTIMAL':
                 u_control  = self.opti[i].debug.value(self.policy[i][0][0][:2,0])
