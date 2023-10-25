@@ -3,8 +3,8 @@ import glob
 import json
 import pdb
 
-from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
-# from scenarios.run_lk_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunLKScenario
+# from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
+from scenarios.run_lk_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunLKScenario
 
 def run_without_tvs(scenario_dict, ego_init_dict, savedir):
     carla_params     = CarlaParams(**scenario_dict["carla_params"])
@@ -70,16 +70,16 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 
             raise ValueError(f"Invalid vehicle role: {vp_dict['role']}")
 
-    runner = RunIntersectionScenario(carla_params,
-                                     drone_viz_params,
-                                     vehicles_params_list,
-                                     pred_params,
-                                     savedir)
-    # runner = RunLKScenario(carla_params,
+    # runner = RunIntersectionScenario(carla_params,
     #                                  drone_viz_params,
     #                                  vehicles_params_list,
     #                                  pred_params,
     #                                  savedir)
+    runner = RunLKScenario(carla_params,
+                                     drone_viz_params,
+                                     vehicles_params_list,
+                                     pred_params,
+                                     savedir)
     runner.run_scenario()
 
 if __name__ == '__main__':

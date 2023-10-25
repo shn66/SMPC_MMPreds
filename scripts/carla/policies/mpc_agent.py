@@ -9,7 +9,7 @@ CARLA_ROOT = os.getenv("CARLA_ROOT")
 if CARLA_ROOT is None:
     raise ValueError("CARLA_ROOT must be defined.")
 
-sys.path.append(CARLA_ROOT + "PythonAPI/carla/agents/")
+sys.path.append(CARLA_ROOT + "/PythonAPI/carla/agents/")
 from navigation.global_route_planner import GlobalRoutePlanner
 from navigation.global_route_planner_dao import GlobalRoutePlannerDAO
 

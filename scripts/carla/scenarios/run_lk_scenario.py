@@ -14,7 +14,7 @@ CARLA_ROOT = os.getenv("CARLA_ROOT")
 if CARLA_ROOT is None:
     raise ValueError("CARLA_ROOT must be defined.")
 
-scriptdir = CARLA_ROOT + "PythonAPI/"
+scriptdir = CARLA_ROOT + "/PythonAPI"
 sys.path.append(scriptdir)
 from examples.synchronous_mode import CarlaSyncMode
 
