@@ -58,11 +58,10 @@ class SMPCAgent(object):
         self.fps=fps
         self.d_min=1.0
 
-        self.OA_inner_approx=OAIA
-
-        self.obca_flag=obca
-        self.obca_mode=obca_mode
-
+        self.fixed_risk=False
+        self.obca_flag=False
+        self.obca_mode=0
+        self.OA_inner_approx=False
         if smpc_config=="full":
             self.ol_flag=False
             self.ns_bl_flag=False
@@ -72,6 +71,11 @@ class SMPCAgent(object):
         elif smpc_config=="no_switch":
             self.ol_flag=False
             self.ns_bl_flag=True
+            self.fixed_risk=False
+        elif smpc_config=='fixed_risk':
+            self.fixed_risk=True
+            self.ns_bl_flag=True
+            self.ol_flag=False
 
         else:
             raise ValueError(f"Invalid SMPC config: {smpc_config}")
@@ -120,7 +124,7 @@ class SMPCAgent(object):
         # MPC initialization (might take a while....)
         if not self.ol_flag:
             if not self.obca_flag:
-                self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
+                self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag, fixed_risk=self.fixed_risk,
                                         L_F=self.lf, L_R=self.lr, fps=self.fps)
             else:
                 self.SMPC=smpc.SMPC_MMPreds_OBCA(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
