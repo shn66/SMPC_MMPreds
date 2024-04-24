@@ -8,11 +8,11 @@
 	"drone_viz_params" : {
 		"x"                  : -30.0,
 		"z"                  :  10.0,
-		"visualize_opencv"   : true,
-		"save_avi"           : true,
-		"overlay_gmm"        : true,
-		"overlay_ego_info"   : true,
-		"overlay_mode_probs" : true,
+		"visualize_opencv"   : false,
+		"save_avi"           : false,
+		"overlay_gmm"        : false,
+		"overlay_ego_info"   : false,
+		"overlay_mode_probs" : false,
 		"overlay_traj_hist"  : false
 	},
 	"ego_init_jsons" : [
@@ -27,12 +27,12 @@
 			"policy_type"                 : "mpc",
 			"intersection_start_node_idx" :     0,
 			"intersection_goal_node_idx"  :     0,
-			"start_left_offset"           :   0.0,
+			"start_left_offset"           :   -0.5,
 			"goal_left_offset"            :   0.0,
 			"start_longitudinal_offset"   :  15.0,
-			"goal_longitudinal_offset"    :  50.0,
-			"nominal_speed"               :  5.0,
-			"init_speed"                  :  5.0
+			"goal_longitudinal_offset"    :  -30.0,
+			"nominal_speed"               :  7.0,
+			"init_speed"                  :  2.0
 		},
 		{
 			"role"                        : "target_2",
@@ -44,9 +44,9 @@
 			"start_left_offset"           :   3.5,
 			"goal_left_offset"            :   3.5,
 			"start_longitudinal_offset"   : -25.0,
-			"goal_longitudinal_offset"    :  -15.0,
-			"nominal_speed"               :  5.0,
-			"init_speed"                  :  5.0
+			"goal_longitudinal_offset"    :  -70.0,
+			"nominal_speed"               :  7.0,
+			"init_speed"                  :  2.0
 		},
 		{
 			"role"                        : "ego",
@@ -56,8 +56,8 @@
 			"intersection_goal_node_idx"  :    0,
 			"start_left_offset"           :  0.0,
 			"goal_left_offset"            :  3.5,
-			"goal_longitudinal_offset"    : 0.0,
-			"nominal_speed"               : 7.0
+			"goal_longitudinal_offset"    : -50.0,
+			"nominal_speed"               : 7.5
 		}
 	]
 }

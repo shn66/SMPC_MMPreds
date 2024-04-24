@@ -8,7 +8,7 @@ class LowLevelControl:
         # Control setup and parameters.
         self.control_prev = carla.VehicleControl()
         self.max_steer_angle = np.radians( vehicle.get_physics_control().wheels[0].max_steer_angle )
-        self.alpha         = 0.99 # low-pass filter on actuation to simulate first order delay
+        self.alpha         = 0.4 # low-pass filter on actuation to simulate first order delay
 
         # Throttle Parameters
         self.k_v  = 0.9  # P gain on velocity tracking error

@@ -321,8 +321,8 @@ class RunLKScenario:
                 # Set initial velocity for all vehicle agents.
                 for veh_actor, init_speed in zip(self.vehicle_actors, self.vehicle_init_speeds):
                     yaw_carla = veh_actor.get_transform().rotation.yaw
-                    carla_vel = carla.Vector3D(x=0.5*init_speed*np.cos(np.radians(yaw_carla)) ,
-                                               y=0.5*init_speed*np.sin(np.radians(yaw_carla)) ,
+                    carla_vel = carla.Vector3D(x=0.01*init_speed*np.cos(np.radians(yaw_carla)) ,
+                                               y=0.01*init_speed*np.sin(np.radians(yaw_carla)) ,
                                                z=0.)
                     veh_actor.set_target_velocity(carla_vel)
 
@@ -359,7 +359,7 @@ class RunLKScenario:
                             self.results_dict[act_key]["solve_times"].append(solve_time)
 
                         # true at the end of the loop only if all agents are done or if iter_ctr>=max_iters
-                        completed = completed and policy.done()
+                        
                         act.apply_control(control)
 
                         if idx_act == self.ego_vehicle_idx:
@@ -367,6 +367,7 @@ class RunLKScenario:
                             ego_vel   = act.get_velocity()
                             ego_speed = np.linalg.norm([ego_vel.x, ego_vel.y])
                             ego_ctrl  = control
+                            completed = completed and policy.done()
 
                     # Get drone camera image.
                     img_drone = np.frombuffer(img.raw_data, dtype=np.uint8)

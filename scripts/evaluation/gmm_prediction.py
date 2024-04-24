@@ -25,8 +25,10 @@ class GMMPrediction:
 		self.sigmas = sigmas
 
 	def get_top_k_mode_labels(self, k=1):
-		# Note: this returns the most probable mode first.
-		return np.argsort(-self.mode_probabilities)[:k]
+		# Note: this returns k-1 probable mode first and the least probable  mode.
+		least=np.argsort(self.mode_probabilities)[:1]
+		most=np.argsort(-self.mode_probabilities)[:k-1]
+		return np.concatenate((most, least))
 
 	def get_top_k_GMM(self, k):
 		assert k > 0 and k < self.n_modes

@@ -97,7 +97,7 @@ class VehicleParams:
     num_modes : int   = 3   # number of GMM modes considered by MPC (prioritizing most probable ones first)
 
     # SMPC specific parameters (ignored for any other policy_type).
-    smpc_config : str = "full" # "full", "open_loop", "no_switch"
+    smpc_config : str = "full" # "var_risk", "open_loop", "fixed_risk"
 
 @dataclass(frozen=True)
 class PredictionParams:

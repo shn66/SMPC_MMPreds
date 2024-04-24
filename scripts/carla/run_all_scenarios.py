@@ -3,10 +3,16 @@ import glob
 import json
 import pdb
 
-# from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
-from scenarios.run_lk_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunLKScenario
 
-def run_without_tvs(scenario_dict, ego_init_dict, savedir):
+
+
+def run_without_tvs(scene, scenario_dict, ego_init_dict, savedir, get_cl=False):
+    if scene =="intersection":
+        from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
+    else:
+        from scenarios.run_lk_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunLKScenario
+
+
     carla_params     = CarlaParams(**scenario_dict["carla_params"])
     drone_viz_params = DroneVizParams(**scenario_dict["drone_viz_params"])
     pred_params      = PredictionParams()
@@ -17,9 +23,11 @@ def run_without_tvs(scenario_dict, ego_init_dict, savedir):
         if vp_dict["role"] == "static":
             continue
             # vehicles_params_list.append( VehicleParams(**vp_dict) )
-        elif vp_dict["role"] == "target":
+        elif "target" in vp_dict["role"]:
             pass
         elif vp_dict["role"] == "ego":
+            if get_cl:
+                vp_dict['goal_left_offset']=0.0
             vp_dict.update(ego_init_dict)
             vp_dict["policy_type"] = "blsmpc"
             vp_dict["smpc_config"] = ""
@@ -28,14 +36,28 @@ def run_without_tvs(scenario_dict, ego_init_dict, savedir):
 
             raise ValueError(f"Invalid vehicle role: {vp_dict['role']}")
 
-    runner = RunIntersectionScenario(carla_params,
-                                     drone_viz_params,
-                                     vehicles_params_list,
-                                     pred_params,
-                                     savedir)
+    if scene =="intersection":
+        runner = RunIntersectionScenario(carla_params,
+                                        drone_viz_params,
+                                        vehicles_params_list,
+                                        pred_params,
+                                        savedir)
+    else:
+        runner = RunLKScenario(carla_params,
+                                        drone_viz_params,
+                                        vehicles_params_list,
+                                        pred_params,
+                                        savedir)
+    
     runner.run_scenario()
 
-def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
+def run_with_tvs(scene, scenario_dict, ego_init_dict, ego_policy_config, savedir):
+    if scene =="intersection":
+        from scenarios.run_intersection_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunIntersectionScenario
+    else:
+        from scenarios.run_lk_scenario import CarlaParams, DroneVizParams, VehicleParams, PredictionParams, RunLKScenario
+    
+    
     carla_params     = CarlaParams(**scenario_dict["carla_params"])
     drone_viz_params = DroneVizParams(**scenario_dict["drone_viz_params"])
     pred_params      = PredictionParams()
@@ -62,6 +84,7 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
         elif "target" in vp_dict["role"]:
             vehicles_params_list.append( VehicleParams(**vp_dict) )
         elif vp_dict["role"] == "ego":
+         
             vp_dict.update(ego_init_dict)
             vp_dict["policy_type"] = policy_type
             vp_dict["smpc_config"] = policy_config
@@ -70,12 +93,14 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 
             raise ValueError(f"Invalid vehicle role: {vp_dict['role']}")
 
-    # runner = RunIntersectionScenario(carla_params,
-    #                                  drone_viz_params,
-    #                                  vehicles_params_list,
-    #                                  pred_params,
-    #                                  savedir)
-    runner = RunLKScenario(carla_params,
+    if scene == "intersection":
+        runner = RunIntersectionScenario(carla_params,
+                                        drone_viz_params,
+                                        vehicles_params_list,
+                                        pred_params,
+                                        savedir)
+    else:
+        runner = RunLKScenario(carla_params,
                                      drone_viz_params,
                                      vehicles_params_list,
                                      pred_params,
@@ -84,54 +109,46 @@ def run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir):
 
 if __name__ == '__main__':
     scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
-    # scenarios_list = sorted(glob.glob(scenario_folder + "scenario_*.json"))
-    # scenarios_list = glob.glob(scenario_folder + "scenario_01.json")
-    scenarios_list = glob.glob(scenario_folder + "scenario_lk.json")
+    scenarios_list = sorted(glob.glob(scenario_folder + "scenario_*.json"))
     results_folder = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results" )
 
     for scenario in scenarios_list:
         # Load the scenario and generate parameters.
         scenario_dict = json.load(open(scenario, "r"))
         scenario_name = scenario.split("/")[-1].split('.json')[0]
-        inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
-        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
+        if "lk" in scenario_name:
+            scene = "highway"
+        else:
+            scene = "intersection"
+        inits_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/inits/" )
 
-        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_lk.json"))
-        # pdb.set_trace()
+        
 
-        # ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
+        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
 
-
-
-        # ego_init_list = [glob.glob(inits_folder + "ego_init_09.json")[0], glob.glob(inits_folder + "ego_init_10.json")[0]]
-        # ego_init_list = sorted(scenario_dict["ego_init_jsons"])
         for ego_init in ego_init_list:
             # Load the ego vehicle parameters.
             ego_init_dict = json.load(open(ego_init, "r"))
-            # ego_init_dict = json.load(open(os.path.join(scenario_folder, ego_init), "r"))
             ego_init_name = ego_init.split("/")[-1].split(".json")[0]
 
 
 
             # Run first without any target vehicles.
-            # savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv")
-            # run_without_tvs(scenario_dict, ego_init_dict, savedir)
-            # print("****************\n"
-            #       f"{scenario_name}_{ego_init_name}_notv\n"
-            #       "****************\n")
-            # break
+            savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv")
+            run_without_tvs(scene, scenario_dict, ego_init_dict, savedir)
+
+            # Get centerline
+            savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv_cl")
+            run_without_tvs(scenario_dict, ego_init_dict, savedir, get_cl=True)
+            print("****************\n"
+                  f"{scenario_name}_{ego_init_name}_notv\n"
+                  "****************\n")
+            
             # Run all ego policy options with target vehicles.
-            # for ego_policy_config in ["blsmpc", "smpc_open_loop", "smpc_no_switch"]:
-
-            # for ego_policy_config in ["smpc_no_switch"]:
-            # for ego_policy_config in ["smpc_no_switch_1_obca", "smpc_no_switch_2_obca", "smpc_no_switch_3_obca"]:
-
-            # for ego_policy_config in ["smpc_no_switch_OAinner", "smpc_no_switch"]:
-            # for ego_policy_config in ["smpc_no_switch_1_obca", "smpc_no_switch_2_obca", "smpc_no_switch_3_obca"]:
-            for ego_policy_config in ["smpc_no_switch"]:
-
-            # # for ego_policy_config in ["smpc_no_switch_2_obca"]:
-            # # for ego_policy_config in ["smpc_no_switch_OAinner"]:
+            
+         
+            for ego_policy_config in ["smpc_var_risk", "smpc_open_loop", "smpc_fixed_risk"]:
+      
 
               savedir = os.path.join( results_folder,
                                       f"{scenario_name}_{ego_init_name}_{ego_policy_config}")

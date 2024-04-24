@@ -36,11 +36,11 @@ class SMPCAgent(object):
                  dt =0.2,
                  N=8,                   # time discretization (s) used to generate a reference
                  N_modes = 2,
-                 smpc_config = "full",
-                 OAIA=False,
+                 smpc_config = "var_risk",
+                 CAIA=False,
                  obca=False,
                  obca_mode=2,
-                 fps=20
+                 fps=5
                  ):
         self.vehicle = vehicle
         self.map    = vehicle.get_world().get_map()
@@ -59,19 +59,15 @@ class SMPCAgent(object):
         self.d_min=1.0
 
         self.fixed_risk=False
-        self.obca_flag=False
-        self.obca_mode=0
-        self.OA_inner_approx=False
-        if smpc_config=="full":
+        self.obca_flag=obca
+        self.obca_mode=obca_mode
+        self.CA_inner_approx=CAIA  # if true, model EV as circle for robustifying collision avoidance constraint against EV heading error
+        if smpc_config=="var_risk":
             self.ol_flag=False
-            self.ns_bl_flag=False
+            self.ns_bl_flag=True
         elif smpc_config=="open_loop":
             self.ol_flag=True
             self.ns_bl_flag=False
-        elif smpc_config=="no_switch":
-            self.ol_flag=False
-            self.ns_bl_flag=True
-            self.fixed_risk=False
         elif smpc_config=='fixed_risk':
             self.fixed_risk=True
             self.ns_bl_flag=True
@@ -125,7 +121,7 @@ class SMPCAgent(object):
         if not self.ol_flag:
             if not self.obca_flag:
                 self.SMPC=smpc.SMPC_MMPreds(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag, fixed_risk=self.fixed_risk,
-                                        L_F=self.lf, L_R=self.lr, fps=self.fps)
+                                    L_F=self.lf, L_R=self.lr, fps=self.fps)
             else:
                 self.SMPC=smpc.SMPC_MMPreds_OBCA(N=self.N, DT=self.dt, N_modes_MAX=self.N_modes, NS_BL_FLAG=self.ns_bl_flag,
                                         L_F=self.lf, L_R=self.lr, fps=self.fps, pol_mode=self.obca_mode)
@@ -221,7 +217,7 @@ class SMPCAgent(object):
 
             self.feas_ref_states_new=np.vstack((self.feas_ref_states_new, np.array([self.feas_ref_states_new[-1,:]]*(self.N+1))))
             self.feas_ref_inputs_new=self.feas_ref_dict['u_opt']
-            print(self.feas_ref_inputs_new.shape)
+            
             if len(self.feas_ref_inputs_new.shape)!=1:
                 self.feas_ref_inputs_new=np.vstack((self.feas_ref_inputs_new, np.array([self.feas_ref_inputs_new[-1,:]]*(self.N+1)))).reshape((-1,2))
             else:
@@ -268,8 +264,10 @@ class SMPCAgent(object):
         target_vehicle_positions=pred_dict["tvs_positions"]
         target_vehicle_gmm_preds=pred_dict["tvs_mode_dists"]
 
+
+
         N_TV=len(target_vehicle_positions)
-        # pdb.set_trace()
+     
 
         # Get the vehicle's current pose in a RH coordinate system.
         x, y = vehicle_loc.x, -vehicle_loc.y
@@ -307,15 +305,14 @@ class SMPCAgent(object):
 
         else:
             # Run SMPC Preds.
-            if self.time%20==0 and self.ref_horizon>self.t_ref+1:
+            if self.time%5==0 and self.ref_horizon>self.t_ref+1:
                 self.reference_regeneration(x,y,psi,speed)
-                # if self.feas_ref_inputs_new.shape[0]==13:
-                #     pdb.set_trace()
+    
 
 
 
             t_ref_new=np.argmin(np.linalg.norm(self.feas_ref_states_new[:,:2]-np.hstack((x,y)), axis=1))
-            if self.prev_opt and self.time%10==0:
+            if self.prev_opt and self.time%1==0:
                 l_states, l_inputs = self.linearization_traj(x,y,psi,speed)
 
             else:
@@ -330,11 +327,11 @@ class SMPCAgent(object):
 
             tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[k][0][j,:,1]), np.diff(target_vehicle_gmm_preds[k][0][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
             tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
-            if self.OA_inner_approx:
+            if self.CA_inner_approx:
                 tv_Q=np.array([[1./(3.6+self.d_min)**2, 0.],[0., 1./(1.2+self.d_min)**2]])
                 tv_shape_matrices=[[[ tv_R[k][j][i].T@tv_Q@tv_R[k][j][i] for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
             elif not self.obca_flag:
-                v_Q=np.array([[1./(2.)**2, 0.],[0., 1./(1.15)**2]])
+                v_Q=np.array([[1./(2.1)**2, 0.],[0., 1./(1.1)**2]])
                 tv_shape_matrices=[[[ np.identity(2) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
                 for k in range(N_TV):
                     for j in range(self.N_modes):
@@ -346,8 +343,12 @@ class SMPCAgent(object):
                             temp=s_evec@np.diag(np.power(np.sqrt(s_eval)**(-1)+1., 2)**(-1))@s_evec.T
                             tv_shape_matrices[k][j][i]=m_sqrt@temp@m_sqrt
             else:
-                tv_shape_matrices=tv_R
+                tv_shape_matrices = tv_R
 
+           
+
+            
+            
             update_dict={  'dx0':x-l_states[0,0],     'dy0':y-l_states[0,1],         'dpsi0':psi-l_states[0,2],       'dv0':speed-l_states[0,3],
                          'x_tv0': [target_vehicle_positions[k][0] for k in range(N_TV)],        'y_tv0': [target_vehicle_positions[k][1] for k in range(N_TV)],
                          'x_ref': self.feas_ref_states_new[t_ref_new:t_ref_new+self.SMPC.N+1,0].T,
@@ -385,10 +386,12 @@ class SMPCAgent(object):
             else:
 
 
-                t_bar=4
-                i=(N_TV-1)*(self.SMPC.t_bar_max)+t_bar
+                t_bar=2 # fix robust horizon for policy tree
+                i=(N_TV-1)*(self.SMPC.t_bar_max)+t_bar  # pick correct id# of parameterized MPC problem
                 self.SMPC.update(i, update_dict)
                 sol_dict=self.SMPC.solve(i)
+
+
 
                 u_control = sol_dict['u_control'] # 2x1 vector, [a_optimal, df_optimal]
                 v_next    = sol_dict['v_next']
@@ -397,26 +400,25 @@ class SMPCAgent(object):
                 self.warm_start={}
                 if is_opt and self.obca_flag:
                     self.warm_start={'ws': [sol_dict['h_opt'],sol_dict['K_opt'],sol_dict['M_opt'],sol_dict['lmbd_opt'],sol_dict['nu_opt']]}
-                self.prev_opt=False
-                # self.prev_opt=is_opt
+                
+                self.prev_opt=is_opt
                 if self.prev_opt:
                     self.prev_nom_inputs=sol_dict['nom_u_ev']
+                # self.prev_opt=False
 
 
             self.control_prev=np.array([u_control[0]+update_dict['a_lin'][0],u_control[1]+update_dict['df_lin'][0]])
             u0=self.control_prev
             v_des=v_next
 
-            # scaled_distance=np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]]).T@tv_shape_matrices[0][0][0]@np.array([x+speed*np.cos(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,0],y+speed*np.sin(psi)*self.SMPC.DT-target_vehicle_gmm_preds[0][0][0,0,1]])
-
-
+            
             print(f"\toptimal?: {is_opt}")
             print(f"\tv_next: {v_next}")
             print(f"\tsteering: {u0[1]}")
+            print(f"state: {z0}")
+            print(f"control: {u0}")
+            
 
-            # print(f"\tsolve time: {solve_time}")
-            # print(f"\t scaled distance_x: {np.sqrt(scaled_distance)}")
-            # print(self.t_ref, self.time)
 
 
             ## Debugging: Plot expected hyperplanes for obstacle avoidance along the prediction horizon
