@@ -242,13 +242,15 @@ class SMPC_MMPreds():
                 DF_DOT_MIN = -0.5,   # min/max front steer angle rate constraint (rad/s)
                 DF_DOT_MAX =  0.5,
                 N_modes_MAX  =  3,
-                N_TV_MAX     =  2,
+                N_TV_MAX     =  1,
                 N_seq_MAX    =  100,
                 T_BAR_MAX    =  6,
-                TIGHTENING   =  1.9,
+                TIGHTENING   =  1.64,#1.9,
                 NOISE_STD    =  [0.1, .1, .01, .1, 0.01], # process noise standard deviations in order [w_x, w_y, w_theta, w_v, w_TV]
-                Q =[0.1*50., 0.005*500, 1*10., 0.1*100.], # weights on x, y, and v.
-                R = [100., 1000],       # weights on inputs
+                # Q =[0.1*50., 0.005*500, 1*10., 0.1*100.], # weights on x, y, and v.
+                Q =[0.1*50., 0.005*500, 1*10., 0.1*10.], # weights on x, y, and v.
+                # R = [100., 1000],       # weights on inputs
+                R = [10., 1000],       # weights on inputs
                 NS_BL_FLAG=False,
                 fixed_risk=False,
                 inv_cdf      = [np.array([[0.02, 1.35],[0.508, 0.91]]), np.array([[1.35,2.],[0.91, 0.978]])],
@@ -338,6 +340,7 @@ class SMPC_MMPreds():
 
         self.probs=[]
 
+        self.collision_avoidance = {i : [] for i in range((self.t_bar_max)*self.N_TV_max)}
 
 
         # s_opts_grb = {'OutputFlag': 0}#, 'FeasibilityTol' : 1e-3, 'PSDTol' : 1e-3}
@@ -597,7 +600,7 @@ class SMPC_MMPreds():
         [h,M,K]=self.policy[i]
 
         slack=self.slacks[i]
-        cost = 100*slack@slack
+        cost = 10*slack@slack
         x=0.5*(self.dz_curr[i][0]+self.x_lin[i][0]+self.x_lin[i][-1])
         y=0.5*(self.dz_curr[i][0]+self.y_lin[i][0]+self.y_lin[i][-1])
         self.opti[i].subject_to(slack>=0)
@@ -612,6 +615,8 @@ class SMPC_MMPreds():
         mode = lambda m, v: int(m/N_TV)*(v==1) + (m%N_TV)*(v==0) 
 
         total_prob=0
+
+        self.collision_avoidance[i] = { j : {t: {k : None for k in range(N_TV)} for t in range(1,self.N)} for j in range(1+(-1+self.N_modes**N_TV)*(t_bar>0)) }
         for j in range(1+(-1+self.N_modes**N_TV)*(t_bar>0)):
             if not self.fixed_risk:
                 self.opti[i].subject_to(self.opti[i].bounded(0.0000001, mmr_std[j],3.0))
@@ -624,9 +629,11 @@ class SMPC_MMPreds():
             for t in range(1,self.N):
                 
                 # oa_ref=[self._oa_ev_ref([self.x_ref[i][t-1], self.x_ref[i][t]], [self.y_ref[i][t-1], self.y_ref[i][t]], self.x_tv_ref[i][k][mode(j,k)][t], self.y_tv_ref[i][k][mode(j,k)][t], self.Q_tv[i][k][mode(j,k)][t-1]) for k in range(N_TV)]
-                oa_ref=[self._oa_ev_ref([self.x_lin[i][t-1], self.x_lin[i][t]], [self.y_lin[i][t-1], self.y_lin[i][t]], self.x_tv_ref[i][k][mode(j,k)][t], self.y_tv_ref[i][k][mode(j,k)][t], self.Q_tv[i][k][mode(j,k)][t-1]) for k in range(N_TV)]
+                try:
+                    oa_ref=[self._oa_ev_ref([self.x_lin[i][t-1], self.x_lin[i][t]], [self.y_lin[i][t-1], self.y_lin[i][t]], self.x_tv_ref[i][k][mode(j,k)][t], self.y_tv_ref[i][k][mode(j,k)][t], self.Q_tv[i][k][mode(j,k)][t-1]) for k in range(N_TV)]
                 # oa_ref=[self._oa_ev_ref([x, x], [y, y], self.x_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.y_tv_ref[i][k][mode_map[seq[s][t]][k]][t], self.Q_tv[i][k][mode_map[seq[s][t]][k]][t-1]) for k in range(N_TV)]
-
+                except:
+                    import pdb;pdb.set_trace()
                 eval_oa_i.append([(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][mode(j,k)][t], self.y_tv_ref[i][k][mode(j,k)][t])).T@self.Q_tv[i][k][mode(j,k)][t-1] for k in range(N_TV)])
 
                 for k in range(N_TV):
@@ -636,6 +643,7 @@ class SMPC_MMPreds():
                     y=+2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][p][t], self.y_tv_ref[i][k][p][t])).T@self.Q_tv[i][k][p][t-1]@(A_block[t*4:t*4+2,:]@self.dz_curr[i]+B_block[t*4:t*4+2,:]@h[j]-T_block[k][p][t*2:(t+1)*2,:]@self.z_tv_curr[i][:,k]-C_block[k][p][t*2:(t+1)*2,:])\
                                                    +2*(oa_ref[k]-ca.vertcat(self.x_tv_ref[i][k][p][t], self.y_tv_ref[i][k][p][t])).T@self.Q_tv[i][k][p][t-1]@(self.z_lin[i][0:2,t]-oa_ref[k]+ca.vertcat(self.x_tv_ref[i][k][p][t], self.y_tv_ref[i][k][p][t]))
 
+                    self.collision_avoidance[i][j][t][k] = {'z':z, 'y':y}
                     soc_constr=ca.soc(z,y)
 
                     self.opti[i].subject_to(soc_constr>0)
@@ -659,10 +667,15 @@ class SMPC_MMPreds():
 
             nom_diff_u=ca.diff(h[j].reshape((2,self.N)),1,1).reshape((-1,1))/self.DT
 
-            cost+=RefTrajGenerator._quad_form(nom_z_ev, 70*cost_matrix_z)+\
+            # cost+=RefTrajGenerator._quad_form(nom_z_ev, 70*cost_matrix_z)+\
+            #       RefTrajGenerator._quad_form(h[j],ca.kron(ca.DM.eye(self.N),ca.diag([0, 0])))+\
+            #       RefTrajGenerator._quad_form(nom_z_diff,100*cost_matrix_z[4:,4:])+\
+            #       RefTrajGenerator._quad_form(nom_diff_u,100*cost_matrix_u)
+
+            cost+=RefTrajGenerator._quad_form(nom_z_ev, 10*cost_matrix_z)+\
                   RefTrajGenerator._quad_form(h[j],ca.kron(ca.DM.eye(self.N),ca.diag([0, 0])))+\
                   RefTrajGenerator._quad_form(nom_z_diff,100*cost_matrix_z[4:,4:])+\
-                  RefTrajGenerator._quad_form(nom_diff_u,100*cost_matrix_u)
+                  RefTrajGenerator._quad_form(nom_diff_u,10*cost_matrix_u)
                   #+RefTrajGenerator._quad_form(H,ca.kron(ca.MX.eye(self.N),1*ca.MX.eye(2)))
 
             self.opti[i].subject_to( self.opti[i].bounded(self.V_MIN,
@@ -698,16 +711,42 @@ class SMPC_MMPreds():
 
     def solve(self, i):
         st = time.time()
+        N_TV=1+int(i/self.t_bar_max)
+        t_bar=i-(N_TV-1)*self.t_bar_max
+
+
+        def _get_mode_collision_prob(sol, m):
+            prob =sol.value(self.probs[i][m])
+            collision_prob = 0
+            for t in range(1, self.N):
+                collision_prob_t = 0
+                for k in range(N_TV): 
+                    z= sol.value(self.collision_avoidance[i][m][t][k]['z']).toarray().squeeze()
+                    y = sol.value(self.collision_avoidance[i][m][t][k]['y'])
+                    noise_samples = np.random.normal(np.zeros(z.shape[-1]), 1, size=(100, z.shape[-1]))
+                    for s in range(100):
+                        collision_prob_t += prob/100*int((y+z@noise_samples[s])>0)
+
+                collision_prob =  max(collision_prob, collision_prob_t)
+            
+            return collision_prob
 
         try:
             # pdb.set_trace()
             sol = self.opti[i].solve()
-            
+         
 
             # Optimal solution.
             u_control  = sol.value(self.policy[i][0][0][:2,0])
             v_tp1      = sol.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0][0,0])
             is_feas     = True
+
+            collision_prob = 0
+            for m in range(1+(-1+self.N_modes**N_TV)*(t_bar>0)):
+                collision_prob+=_get_mode_collision_prob(sol, m)
+
+
+            
 
             z_lin_ev   = sol.value(self.z_lin[i])
             u_lin_ev   = sol.value(self.u_lin[i])
@@ -731,6 +770,9 @@ class SMPC_MMPreds():
                 v_tp1      = self.opti[i].debug.value(self.v_lin[i][1]+self.dz_curr[i][3]+self.DT*self.policy[i][0][0][0,0])
                 is_feas     = True
 
+                collision_prob = 0
+                for m in range(1+(-1+self.N_modes**N_TV)*(t_bar>0)):
+                    collision_prob+=_get_mode_collision_prob(sol, m)
                 z_lin_ev   = self.opti[i].debug.value(self.z_lin[i])
                 u_lin_ev   = self.opti[i].debug.value(self.u_lin[i])
                 z_ref_ev   = self.opti[i].debug.value(self.z_ref[i])
@@ -769,6 +811,7 @@ class SMPC_MMPreds():
             sol_dict['z_lin']   = z_lin_ev
             sol_dict['z_ref']   = z_ref_ev
             sol_dict['z_tv_ref']= z_tv_ref
+            sol_dict['collision_prob'] = collision_prob
 
             if i!=0:
              sol_dict['eval_oa'] = eval_oa[:self.N-1,:]
@@ -804,7 +847,7 @@ class SMPC_MMPreds():
 
     def _update_ev_rotated_costs(self, i, Rs_ev):
         for t in range(self.N):
-            self.opti[i].set_value(self.rot_costs[i][t], ca.diagcat(Rs_ev[t].T@self.Q[:2,:2]@Rs_ev[t], self.Q[2:,2:]))
+            self.opti[i].set_value(self.rot_costs[i][t], ca.diagcat(Rs_ev[t]@self.Q[:2,:2]@Rs_ev[t].T, self.Q[2:,2:]))
 
 
 

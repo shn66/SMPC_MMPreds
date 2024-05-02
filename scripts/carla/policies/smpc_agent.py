@@ -267,6 +267,8 @@ class SMPCAgent(object):
 
 
         N_TV=len(target_vehicle_positions)
+
+
      
 
         # Get the vehicle's current pose in a RH coordinate system.
@@ -325,7 +327,7 @@ class SMPCAgent(object):
             Rs_ev=[np.array([[np.cos(l_states[t,2]),np.sin(l_states[t,2])],[-np.sin(l_states[t,2]), np.cos(l_states[t,2])]]) for t in range(1,self.N+1)]
 
 
-            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[k][0][j,:,1]), np.diff(target_vehicle_gmm_preds[k][0][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
+            tv_theta=[[np.arctan2(np.diff(target_vehicle_gmm_preds[0][k][j,:,1]), np.diff(target_vehicle_gmm_preds[0][k][j,:,0])) for j in range(self.N_modes)] for k in range(N_TV)]
             tv_R=[[[np.array([[np.cos(tv_theta[k][j][i]), np.sin(tv_theta[k][j][i])],[-np.sin(tv_theta[k][j][i]), np.cos(tv_theta[k][j][i])]]) for i in range(self.N-1)] for j in range(self.N_modes)] for k in range(N_TV)]
             if self.CA_inner_approx:
                 tv_Q=np.array([[1./(3.6+self.d_min)**2, 0.],[0., 1./(1.2+self.d_min)**2]])
@@ -363,7 +365,7 @@ class SMPCAgent(object):
                          'v_lin': l_states[:,3].T ,
                          'a_lin': l_inputs[:,0].T ,
                          'df_lin': l_inputs[:,1].T,
-                         'mus'  : [target_vehicle_gmm_preds[k][0] for k in range(N_TV)],     'sigmas' : [target_vehicle_gmm_preds[k][1] for k in range(N_TV)], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices, 'Rs_ev': Rs_ev }
+                         'mus'  : [target_vehicle_gmm_preds[0][k] for k in range(N_TV)],     'sigmas' : [target_vehicle_gmm_preds[1][k] for k in range(N_TV)], 'acc_prev' : self.control_prev[0], 'df_prev' : self.control_prev[1],       'tv_shapes': tv_shape_matrices, 'Rs_ev': Rs_ev }
 
 
 

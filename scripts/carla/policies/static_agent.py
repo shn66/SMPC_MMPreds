@@ -101,94 +101,94 @@ class StaticAgent(object):
     def done(self):
         return self.goal_reached
 
-    # def run_step(self, pred_dict):
-    #     vehicle_tf    = self.vehicle.get_transform()
-    #     vehicle_vel   = self.vehicle.get_velocity()
-
-    #     # Get the vehicle's current pose + speed in a RH coordinate system.
-    #     x, y = vehicle_tf.location.x, -vehicle_tf.location.y
-    #     psi = -fth.fix_angle(np.radians(vehicle_tf.rotation.yaw))
-    #     speed = np.sqrt(vehicle_vel.x**2 + vehicle_vel.y**2)
-
-    #     z0 = np.array([x, y, psi, speed]) # current kinematic state
-    #     u0 = np.array([0., 0.])           # acceleration, steering angle setpoint for low-level control
-
-    #     control =  self._low_level_control.update(speed, # v_curr
-    #                                               0., # a_des
-    #                                               self.nominal_speed, # v_des
-    #                                               psi) # df_des
-
-    #     # return self.static_control, z0, u0, True, np.nan
-    #     return control, z0, u0, True, np.nan
-
     def run_step(self, pred_dict):
-        vehicle_loc   = self.vehicle.get_location()
         vehicle_tf    = self.vehicle.get_transform()
         vehicle_vel   = self.vehicle.get_velocity()
-        vehicle_accel = self.vehicle.get_acceleration()
-        speed_limit   = self.nominal_speed #self.vehicle.get_speed_limit()
 
-        # Get the vehicle's current pose in a RH coordinate system.
-        x, y = vehicle_loc.x, -vehicle_loc.y
+        # Get the vehicle's current pose + speed in a RH coordinate system.
+        x, y = vehicle_tf.location.x, -vehicle_tf.location.y
         psi = -fth.fix_angle(np.radians(vehicle_tf.rotation.yaw))
+        speed = np.sqrt(vehicle_vel.x**2 + vehicle_vel.y**2)
 
-        # Get the current speed and longitudinal acceleration.
-        speed = np.sqrt(vehicle_vel.x**2 + vehicle_vel.y**2)  # TODO: fix?
-        accel = np.cos(psi) * vehicle_accel.x - np.sin(psi)*vehicle_accel.y
+        z0 = np.array([x, y, psi, speed]) # current kinematic state
+        u0 = np.array([0., 0.])           # acceleration, steering angle setpoint for low-level control
 
-        # Look up the projection of the current pose to Frenet frame.
-        s, ey, epsi = \
-            self._frenet_traj.convert_global_to_frenet_frame(x, y, psi)
-        curv = self._frenet_traj.get_curvature_at_s(s)
-
-        # Initialize variables to be returned.
-        z0=np.array([x,y,psi,speed])
-        u0=np.array([self.A_MIN, 0.])
-        v_des = np.clip(z0[-1] + self.A_MIN * self.DT, self.V_MIN, self.V_MAX)
-        is_opt=False
-        solve_time=np.nan
-
-        if self.goal_reached or self._frenet_traj.reached_trajectory_end(s, resolution=5.):
-            # Stop if the end of the path is reached and signal completion.
-            self.goal_reached = True
-        else:
-            # Update MPC problem.
-            update_dict = {'x0'      : x,
-                           'y0'      : y,
-                           'psi0'    : psi,
-                           'v0'      : speed}
-            update_dict.update( self._get_reference_traj(**update_dict) )
-
-            if self.warm_start:
-                update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
-                update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
-                update_dict['warm_start'] = self.warm_start
-            else:
-                update_dict['acc_prev']  = 0.
-                update_dict['df_prev']   = 0.
-
-            self._update(update_dict)
-
-            # Solve MPC problem.
-            sol_dict = self._solve()
-            if sol_dict['optimal']:
-                self.warm_start = {}
-                self.warm_start['z_ws']       = sol_dict['z_mpc']
-                self.warm_start['u_ws']       = sol_dict['u_mpc']
-                self.warm_start['sl_ws']      = sol_dict['sl_mpc']
-
-            u0=sol_dict['u_mpc'][0,:]
-            is_opt     = sol_dict['optimal']
-            solve_time = sol_dict['solve_time']
-            v_des = sol_dict['z_mpc'][1,3]
-
-        # Get low level control.
         control =  self._low_level_control.update(speed, # v_curr
-                                                  u0[0], # a_des
-                                                  v_des, # v_des
-                                                  u0[1]) # df_des
+                                                  0., # a_des
+                                                  self.nominal_speed, # v_des
+                                                  psi) # df_des
 
-        return control, z0, u0, is_opt, solve_time
+        # return self.static_control, z0, u0, True, np.nan
+        return control, z0, u0, True, np.nan
+
+    # def run_step(self, pred_dict):
+    #     vehicle_loc   = self.vehicle.get_location()
+    #     vehicle_tf    = self.vehicle.get_transform()
+    #     vehicle_vel   = self.vehicle.get_velocity()
+    #     vehicle_accel = self.vehicle.get_acceleration()
+    #     speed_limit   = self.nominal_speed #self.vehicle.get_speed_limit()
+
+    #     # Get the vehicle's current pose in a RH coordinate system.
+    #     x, y = vehicle_loc.x, -vehicle_loc.y
+    #     psi = -fth.fix_angle(np.radians(vehicle_tf.rotation.yaw))
+
+    #     # Get the current speed and longitudinal acceleration.
+    #     speed = np.sqrt(vehicle_vel.x**2 + vehicle_vel.y**2)  # TODO: fix?
+    #     accel = np.cos(psi) * vehicle_accel.x - np.sin(psi)*vehicle_accel.y
+
+    #     # Look up the projection of the current pose to Frenet frame.
+    #     s, ey, epsi = \
+    #         self._frenet_traj.convert_global_to_frenet_frame(x, y, psi)
+    #     curv = self._frenet_traj.get_curvature_at_s(s)
+
+    #     # Initialize variables to be returned.
+    #     z0=np.array([x,y,psi,speed])
+    #     u0=np.array([self.A_MIN, 0.])
+    #     v_des = np.clip(z0[-1] + self.A_MIN * self.DT, self.V_MIN, self.V_MAX)
+    #     is_opt=False
+    #     solve_time=np.nan
+
+    #     if self.goal_reached or self._frenet_traj.reached_trajectory_end(s, resolution=5.):
+    #         # Stop if the end of the path is reached and signal completion.
+    #         self.goal_reached = True
+    #     else:
+    #         # Update MPC problem.
+    #         update_dict = {'x0'      : x,
+    #                        'y0'      : y,
+    #                        'psi0'    : psi,
+    #                        'v0'      : speed}
+    #         update_dict.update( self._get_reference_traj(**update_dict) )
+
+    #         if self.warm_start:
+    #             update_dict['acc_prev']   = self.warm_start['u_ws'][0, 0]
+    #             update_dict['df_prev']    = self.warm_start['u_ws'][0, 1]
+    #             update_dict['warm_start'] = self.warm_start
+    #         else:
+    #             update_dict['acc_prev']  = 0.
+    #             update_dict['df_prev']   = 0.
+
+    #         self._update(update_dict)
+
+    #         # Solve MPC problem.
+    #         sol_dict = self._solve()
+    #         if sol_dict['optimal']:
+    #             self.warm_start = {}
+    #             self.warm_start['z_ws']       = sol_dict['z_mpc']
+    #             self.warm_start['u_ws']       = sol_dict['u_mpc']
+    #             self.warm_start['sl_ws']      = sol_dict['sl_mpc']
+
+    #         u0=sol_dict['u_mpc'][0,:]
+    #         is_opt     = sol_dict['optimal']
+    #         solve_time = sol_dict['solve_time']
+    #         v_des = sol_dict['z_mpc'][1,3]
+
+    #     # Get low level control.
+    #     control =  self._low_level_control.update(speed, # v_curr
+    #                                               u0[0], # a_des
+    #                                               v_des, # v_des
+    #                                               u0[1]) # df_des
+
+    #     return control, z0, u0, is_opt, solve_time
 
     def _fit_velocity_profile(self):
 

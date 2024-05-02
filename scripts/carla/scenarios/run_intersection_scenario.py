@@ -133,6 +133,7 @@ def get_vehicle_policy(vehicle_params, vehicle_actor, goal_transform):
     if vehicle_params.policy_type == "static":
         return StaticAgent(vehicle_actor, goal_transform.location)
     elif vehicle_params.policy_type == "mpc":
+
         return MPCAgent(vehicle_actor, goal_transform.location, \
                         N=vehicle_params.N,
                         dt=vehicle_params.dt,
@@ -321,7 +322,7 @@ class RunIntersectionScenario:
                     carla_vel = carla.Vector3D(x=init_speed*np.cos(np.radians(yaw_carla)) ,
                                                y=init_speed*np.sin(np.radians(yaw_carla)) ,
                                                z=0.)
-                    veh_actor.set_velocity(carla_vel)
+                    veh_actor.set_target_velocity(carla_vel)
 
                 for _ in range(2):
                     sync_mode.tick(timeout=self.timeout)
@@ -448,7 +449,7 @@ class RunIntersectionScenario:
                 gmm_pred_tv = self.pred_model.predict_instance(img_tv, past_states_tv[:-1])
                 gmm_pred_tv.transform(R_target_to_world, t_target_to_world)
                 gmm_pred_tv=gmm_pred_tv.get_top_k_GMM(self.ego_num_modes)
-                import pdb; pdb.set_trace()
+                
                 tvs_mode_probs = [gmm_pred_tv.mode_probabilities]
                 tvs_mode_dists = [[gmm_pred_tv.mus[:, :self.ego_N, :]], [gmm_pred_tv.sigmas[:, :self.ego_N, :, :]]]
                 tvs_valid_pred = [True]

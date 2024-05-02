@@ -109,7 +109,7 @@ def run_with_tvs(scene, scenario_dict, ego_init_dict, ego_policy_config, savedir
 
 if __name__ == '__main__':
     scenario_folder = os.path.join( os.path.dirname( os.path.abspath(__file__)  ), "scenarios/" )
-    scenarios_list = sorted(glob.glob(scenario_folder + "scenario_*.json"))
+    scenarios_list = sorted(glob.glob(scenario_folder + "scenario_lk.json"))
     results_folder = os.path.join( os.path.abspath(__file__).split("scripts")[0], "results" )
 
     for scenario in scenarios_list:
@@ -124,25 +124,25 @@ if __name__ == '__main__':
 
         
 
-        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_*.json"))
+        ego_init_list = sorted(glob.glob(inits_folder + "ego_init_01.json"))
 
         for ego_init in ego_init_list:
             # Load the ego vehicle parameters.
             ego_init_dict = json.load(open(ego_init, "r"))
-            ego_init_name = ego_init.split("/")[-1].split(".json")[0]
+            ego_init_name = ego_init.split("/")[-1].split(".json")
 
 
 
             # Run first without any target vehicles.
-            savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv")
-            run_without_tvs(scene, scenario_dict, ego_init_dict, savedir)
+            # savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv")
+            # run_without_tvs(scene, scenario_dict, ego_init_dict, savedir)
 
-            # Get centerline
-            savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv_cl")
-            run_without_tvs(scenario_dict, ego_init_dict, savedir, get_cl=True)
-            print("****************\n"
-                  f"{scenario_name}_{ego_init_name}_notv\n"
-                  "****************\n")
+            # # Get centerline
+            # savedir = os.path.join( results_folder, f"{scenario_name}_{ego_init_name}_notv_cl")
+            # run_without_tvs(scene, scenario_dict, ego_init_dict, savedir, get_cl=True)
+            # print("****************\n"
+            #       f"{scenario_name}_{ego_init_name}_notv\n"
+            #       "****************\n")
             
             # Run all ego policy options with target vehicles.
             
@@ -155,6 +155,6 @@ if __name__ == '__main__':
               print("****************\n"
                   f"{scenario_name}_{ego_init_name}_{ego_policy_config}\n"
                   "****************\n")
-              run_with_tvs(scenario_dict, ego_init_dict, ego_policy_config, savedir)
+              run_with_tvs(scene, scenario_dict, ego_init_dict, ego_policy_config, savedir)
 
             # break
